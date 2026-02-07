@@ -125,6 +125,20 @@ app.get('/api/data', (req, res) => {
     });
 });
 
+// Serve static files from the React frontend app
+const frontendPath = path.join(__dirname, '../frontend/dist');
+if (fs.existsSync(frontendPath)) {
+    app.use(express.static(frontendPath));
+
+    // The "catchall" handler: for any request that doesn't
+    // match one above, send back React's index.html file.
+    app.get('*', (req, res) => {
+        if (!req.path.startsWith('/api')) {
+            res.sendFile(path.join(frontendPath, 'index.html'));
+        }
+    });
+}
+
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
 });
