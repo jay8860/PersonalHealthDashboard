@@ -183,7 +183,8 @@ function App() {
       setUploadedResult(result);
       fetchHistory();
     } catch (err) {
-      alert("Error: " + (err.response?.data?.error || err.message));
+      const errorMsg = err.response?.data?.details || err.response?.data?.error || err.message;
+      alert("Error: " + errorMsg);
     } finally {
       setIsUploading(false);
     }
@@ -203,7 +204,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] font-sans">
-      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xml,image/*,application/pdf" />
+      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xml,.csv,image/*,application/pdf" />
 
       {/* Sidebar - Modern Floating Style */}
       <nav className="fixed left-6 top-6 bottom-6 w-24 lg:w-72 bg-white rounded-[3rem] shadow-2xl z-50 border border-slate-100 flex flex-col p-8 transition-all duration-500 overflow-hidden">
@@ -224,8 +225,8 @@ function App() {
               key={item.id}
               onClick={() => setActiveTab(item.id)}
               className={`w-full group flex items-center gap-4 p-5 rounded-3xl transition-all duration-300 ${activeTab === item.id
-                  ? 'bg-blue-600 text-white shadow-xl shadow-blue-500/30'
-                  : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'
+                ? 'bg-blue-600 text-white shadow-xl shadow-blue-500/30'
+                : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'
                 }`}
             >
               <item.icon size={24} className={activeTab === item.id ? 'animate-pulse' : ''} />

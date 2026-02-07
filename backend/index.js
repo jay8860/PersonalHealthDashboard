@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const { parseAppleHealth } = require('./parsers/apple_health');
+const { parseCSVHealth } = require('./parsers/csv_parser');
 const { analyzeReport } = require('./services/ai_service');
 
 const app = express();
@@ -90,7 +91,11 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             // Process Apple Health Export
             type = 'apple_health';
             result = await parseAppleHealth(filePath);
-        } else if (req.file.mimetype.startsWith('image/') || req.file.mimetype === 'application/pdf') {
+        } else if (fileName.endsWith('.csv')) {
+            // Process CSV Health Data
+            type = 'csv_data';
+            result = await parseCSVHealth(filePath);
+        } else if (req.file.mimetype.startsWith('image/') || req.file.mimetype === 'application/pdf' || fileName.endsWith('.pdf')) {
             // Process Medical Report with Gemini
             type = 'medical_report';
             result = await analyzeReport(filePath, req.file.mimetype);
@@ -99,9 +104,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         }
 
         // Save to DB
-        const stmt = db.prepare("INSERT INTO health_data (type, data) VALUES (?, ?)");
-        stmt.run(type, JSON.stringify(result));
-        stmt.finalize();
+        db.run("INSERT INTO health_data (type, data) VALUES (?, ?)", [type, JSON.stringify(result)], (err) => {
+            if (err) console.error('Database save error:', err);
+        });
 
         res.json({
             message: 'File processed successfully',
@@ -109,8 +114,11 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             result
         });
     } catch (error) {
-        console.error('Processing error:', error);
-        res.status(500).json({ error: 'Failed to process file', details: error.message });
+        console.error('Full Processing error:', error);
+        res.status(500).json({
+            error: 'Failed to process file',
+            details: error.message || 'Unknown processing error'
+        });
     }
 });
 
