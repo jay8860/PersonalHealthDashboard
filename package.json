@@ -1,0 +1,14 @@
+{
+    "name": "personal-health-dashboard-root",
+    "version": "1.0.0",
+    "description": "AI Health Dashboard",
+    "private": true,
+    "scripts": {
+        "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+        "build:frontend": "cd frontend && npm run build",
+        "start": "node backend/index.js",
+        "dev:backend": "cd backend && npm run dev",
+        "dev:frontend": "cd frontend && npm run dev"
+    },
+    "dependencies": {}
+}
