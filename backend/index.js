@@ -132,9 +132,11 @@ if (fs.existsSync(frontendPath)) {
 
     // The "catchall" handler: for any request that doesn't
     // match one above, send back React's index.html file.
-    app.get('/:path*', (req, res) => {
-        if (!req.path.startsWith('/api')) {
+    app.use((req, res, next) => {
+        if (!req.path.startsWith('/api') && req.method === 'GET') {
             res.sendFile(path.join(frontendPath, 'index.html'));
+        } else {
+            next();
         }
     });
 }
