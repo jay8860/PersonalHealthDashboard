@@ -8,6 +8,7 @@ const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const { parseAppleHealth } = require('./parsers/apple_health');
 const { parseCSVHealth } = require('./parsers/csv_parser');
+const { parseExcelHealth } = require('./parsers/excel_parser');
 const { analyzeReport } = require('./services/ai_service');
 
 const app = express();
@@ -95,6 +96,10 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             // Process CSV Health Data
             type = 'csv_data';
             result = await parseCSVHealth(filePath);
+        } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+            // Process Excel Health Data
+            type = 'excel_data';
+            result = await parseExcelHealth(filePath);
         } else if (req.file.mimetype.startsWith('image/') || req.file.mimetype === 'application/pdf' || fileName.endsWith('.pdf')) {
             // Process Medical Report with Gemini
             type = 'medical_report';

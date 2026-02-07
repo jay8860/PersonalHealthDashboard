@@ -204,7 +204,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] font-sans">
-      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xml,.csv,image/*,application/pdf" />
+      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xml,.csv,.xlsx,.xls,image/*,application/pdf" />
 
       {/* Sidebar - Modern Floating Style */}
       <nav className="fixed left-6 top-6 bottom-6 w-24 lg:w-72 bg-white rounded-[3rem] shadow-2xl z-50 border border-slate-100 flex flex-col p-8 transition-all duration-500 overflow-hidden">
