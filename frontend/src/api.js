@@ -14,6 +14,7 @@ export const uploadFile = async (file) => {
         headers: {
             'Content-Type': 'multipart/form-data',
         },
+        timeout: 600000, // 10 minutes for large files and AI analysis
     });
     return response.data;
 };
