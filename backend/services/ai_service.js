@@ -18,7 +18,11 @@ async function analyzeReport(filePath, mimeType) {
 
   let filePart;
 
-  if (fileSizeMB > 15) {
+  if (mimeType === 'text/plain' || filePath.toLowerCase().endsWith('.txt')) {
+    // For text files, read content directly
+    const textData = fs.readFileSync(filePath, 'utf-8');
+    filePart = { text: textData };
+  } else if (fileSizeMB > 15) {
     // Use File API for larger files
     console.log(`Large file detected (${fileSizeMB.toFixed(2)}MB). Using File API...`);
     const uploadResponse = await fileManager.uploadFile(filePath, {
@@ -44,7 +48,8 @@ async function analyzeReport(filePath, mimeType) {
     };
   }
 
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  console.log("AI Service: Analyzing report using model gemini-2.0-flash...");
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
   const prompt = `
     Analyze this medical report/prescription provided. 
@@ -60,6 +65,7 @@ async function analyzeReport(filePath, mimeType) {
     {
       "vitals": [{"name": "...", "value": "...", "unit": "...", "status": "normal/high/low"}],
       "summary": "...",
+      "highlights": [{"title": "...", "desc": "...", "color": "rose/emerald/indigo"}],
       "concerns": ["..."],
       "positives": ["..."],
       "nextSteps": ["..."]

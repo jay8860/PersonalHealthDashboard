@@ -1,0 +1,17 @@
+MEDICAL REPORT
+Patient Name: Mr. Jayant
+Date: 08-02-2026
+
+Diagnosis:
+1. Mild Gastritis (Upset Stomach) due to irregular eating habits.
+2. Vitamin D Deficiency detected in recent blood work.
+
+Prescription:
+- Pantoprazole 40mg (Before breakfast) - 5 days
+- Vitamin D3 60k IU (Weekly once) - 8 weeks
+
+Advice:
+- Avoid spicy and oily foods.
+- Increase water intake.
+- Get 15-20 mins of morning sunlight.
+- Rest is advised for 2 days.
