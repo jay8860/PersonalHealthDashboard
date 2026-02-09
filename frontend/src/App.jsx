@@ -35,7 +35,8 @@ import {
   Lock,
   X,
   CheckSquare,
-  Square
+  Square,
+  Sun
 } from 'lucide-react';
 import {
   LineChart,
@@ -52,7 +53,7 @@ import {
   Cell
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadFiles, getHealthData, deleteRecord, getDeepAnalysis, deleteBulk, getDailyNotes, createDailyNote, getTimeline, createTimelineEntry, exportJsonBackupUrl, exportCsvBackupUrl } from './api';
+import { uploadFiles, getHealthData, deleteRecord, getDeepAnalysis, deleteBulk, getDailyNotes, createDailyNote, getTimeline, createTimelineEntry, exportJsonBackupUrl, exportCsvBackupUrl, login } from './api';
 
 // --- Configuration for Health Metrics ---
 const metricConfig = {
@@ -104,7 +105,12 @@ const metricConfig = {
 
 // --- Main App Component ---
 function App() {
-  const [token, setToken] = useState('always-authenticated'); // Bypassing login for local testing
+  const [token, setToken] = useState(() => localStorage.getItem('phd_token') || '');
+  const [loginUser, setLoginUser] = useState('admin');
+  const [loginPass, setLoginPass] = useState('admin123');
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('phd_theme') || 'light');
   const [activeTab, setActiveTab] = useState('overview');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -148,13 +154,21 @@ function App() {
   };
 
   useEffect(() => {
+    if (!token) return;
     fetchHistory();
     fetchNotes();
     fetchTimeline();
     // Auto-refresh every 30s to see new data
     const interval = setInterval(fetchHistory, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [token]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') root.classList.add('dark');
+    else root.classList.remove('dark');
+    localStorage.setItem('phd_theme', theme);
+  }, [theme]);
 
   const fetchHistory = async () => {
     try {
@@ -184,8 +198,8 @@ function App() {
   };
 
   const handleLogout = () => {
-    // Disabled logout for local development
-    console.log("Logout clicked - disabled for dev");
+    setToken('');
+    localStorage.removeItem('phd_token');
   };
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -309,6 +323,29 @@ function App() {
       setCopyLabel('Copy failed');
       setTimeout(() => setCopyLabel('Copy'), 2000);
     }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthLoading(true);
+    try {
+      const result = await login(loginUser.trim(), loginPass);
+      if (result?.success && result?.token) {
+        setToken(result.token);
+        localStorage.setItem('phd_token', result.token);
+      } else {
+        setAuthError('Invalid credentials.');
+      }
+    } catch (err) {
+      setAuthError(err.response?.data?.error || err.message || 'Login failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };
 
   const handleExport = (type, table) => {
@@ -723,6 +760,67 @@ function App() {
   const latestMedicalReport = medicalHistory[0] || null;
   const latestReportVitals = latestMedicalReport?.vitals || [];
 
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-[#f8fafc] font-sans flex items-center justify-center px-6">
+        <div className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 p-10 relative overflow-hidden">
+          <div className="absolute -top-16 -right-16 w-48 h-48 bg-blue-600/10 rounded-full blur-3xl"></div>
+          <div className="flex items-center gap-4 mb-8">
+            <div className="bg-gradient-to-br from-blue-500 to-indigo-600 p-3 rounded-2xl shadow-lg shadow-blue-500/20 shrink-0">
+              <Activity className="text-white w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-black text-slate-900">Personal Health Dashboard</h2>
+              <p className="text-slate-400 text-sm font-bold">Sign in to continue</p>
+            </div>
+          </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Username</label>
+              <input
+                type="text"
+                value={loginUser}
+                onChange={(e) => setLoginUser(e.target.value)}
+                className="w-full mt-2 rounded-2xl border border-slate-100 p-3 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="admin"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Password</label>
+              <input
+                type="password"
+                value={loginPass}
+                onChange={(e) => setLoginPass(e.target.value)}
+                className="w-full mt-2 rounded-2xl border border-slate-100 p-3 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="admin123"
+              />
+            </div>
+            {authError && (
+              <div className="text-rose-600 text-sm font-bold">{authError}</div>
+            )}
+            <button
+              type="submit"
+              disabled={authLoading}
+              className="w-full py-3 rounded-2xl bg-slate-900 text-white font-black text-sm hover:bg-blue-600 transition-all disabled:opacity-50"
+            >
+              {authLoading ? 'Signing in...' : 'Sign In'}
+            </button>
+          </form>
+          <div className="mt-6 flex items-center justify-between text-xs font-bold text-slate-400">
+            <span>Default: admin / admin123</span>
+            <button
+              onClick={toggleTheme}
+              className="flex items-center gap-1 text-slate-500 hover:text-slate-700"
+            >
+              {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+              {theme === 'dark' ? 'Light' : 'Dark'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f8fafc] font-sans">
       <input
@@ -764,7 +862,14 @@ function App() {
           ))}
         </div>
 
-        <div className="mt-auto">
+        <div className="mt-auto space-y-3">
+          <button
+            onClick={toggleTheme}
+            className="w-full flex items-center gap-4 p-5 text-slate-400 hover:bg-slate-50 hover:text-slate-600 rounded-3xl transition-all font-bold"
+          >
+            {theme === 'dark' ? <Sun size={24} /> : <Moon size={24} />}
+            <span className="hidden lg:block text-lg">{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+          </button>
           <button onClick={handleLogout} className="w-full flex items-center gap-4 p-5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-3xl transition-all font-bold">
             <LogOut size={24} />
             <span className="hidden lg:block text-lg">Logout</span>
