@@ -37,12 +37,32 @@ export const deleteRecord = async (id) => {
     return response.data;
 };
 
-export const getDeepAnalysis = async (metrics, medicalHistory, ecgHistory, cdaHistory) => {
-    const response = await axios.post(`${API_BASE_URL}/ai/coach`, { metrics, medicalHistory, ecgHistory, cdaHistory });
+export const getDeepAnalysis = async (metrics, medicalHistory, ecgHistory, cdaHistory, dailyNote, timeline) => {
+    const response = await axios.post(`${API_BASE_URL}/ai/coach`, { metrics, medicalHistory, ecgHistory, cdaHistory, dailyNote, timeline });
     return response.data;
 };
 
 export const deleteBulk = async (ids) => {
     const response = await axios.post(`${API_BASE_URL}/data/delete-bulk`, { ids });
+    return response.data;
+};
+
+export const getDailyNotes = async (limit = 30) => {
+    const response = await axios.get(`${API_BASE_URL}/notes?limit=${limit}`);
+    return response.data;
+};
+
+export const createDailyNote = async (text) => {
+    const response = await axios.post(`${API_BASE_URL}/notes`, { text });
+    return response.data;
+};
+
+export const getTimeline = async (limit = 50) => {
+    const response = await axios.get(`${API_BASE_URL}/timeline?limit=${limit}`);
+    return response.data;
+};
+
+export const createTimelineEntry = async (payload) => {
+    const response = await axios.post(`${API_BASE_URL}/timeline`, payload);
     return response.data;
 };

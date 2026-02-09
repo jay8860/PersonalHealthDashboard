@@ -5,7 +5,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 const path = require('path');
 const fs = require('fs');
-const sqlite3 = require('sqlite3').verbose();
+const { initDb, all, run, isPostgres } = require('./db');
 const { parseAppleHealth } = require('./parsers/apple_health');
 const { parseCSVHealth } = require('./parsers/csv_parser');
 const { parseExcelHealth } = require('./parsers/excel_parser');
@@ -32,19 +32,12 @@ const sniffFileForCDA = (filePath) => {
     }
 };
 
-// Database setup
-const db = new sqlite3.Database('./health.db', (err) => {
-    if (err) console.error('Error opening database', err);
-    else {
-        db.run(`CREATE TABLE IF NOT EXISTS health_data (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT,
-      data TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-        console.log('Database initialized');
+const buildSqlPlaceholders = (count) => {
+    if (isPostgres()) {
+        return Array.from({ length: count }, (_, i) => `$${i + 1}`).join(',');
     }
-});
+    return Array.from({ length: count }, () => '?').join(',');
+};
 
 // Middleware
 app.use(cors());
@@ -146,12 +139,14 @@ app.post('/api/upload', upload.array('files'), async (req, res) => {
             }
 
             // Save to DB
-            const savedItem = await new Promise((resolve, reject) => {
-                db.run("INSERT INTO health_data (type, data) VALUES (?, ?)", [type, JSON.stringify(result)], function (err) {
-                    if (err) reject(err);
-                    else resolve({ id: this.lastID, type, result });
-                });
-            });
+            let savedItem;
+            if (isPostgres()) {
+                const saved = await run("INSERT INTO health_data (type, data) VALUES ($1, $2) RETURNING id", [type, JSON.stringify(result)]);
+                savedItem = { id: saved.rows[0].id, type, result };
+            } else {
+                const saved = await run("INSERT INTO health_data (type, data) VALUES (?, ?)", [type, JSON.stringify(result)]);
+                savedItem = { id: saved.lastID, type, result };
+            }
             results.push(savedItem);
 
         } catch (error) {
@@ -169,44 +164,127 @@ app.post('/api/upload', upload.array('files'), async (req, res) => {
 });
 
 // Get latest data
-app.get('/api/data', (req, res) => {
-    db.all("SELECT * FROM health_data ORDER BY created_at DESC LIMIT 50", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.get('/api/data', async (req, res) => {
+    try {
+        const rows = await all("SELECT * FROM health_data ORDER BY created_at DESC LIMIT 50", []);
         const parsedRows = rows.map(row => ({
             ...row,
             data: JSON.parse(row.data)
         }));
         res.json(parsedRows);
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Single delete record
-app.delete('/api/data/:id', (req, res) => {
+app.delete('/api/data/:id', async (req, res) => {
     const id = Number.parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
 
-    db.run("DELETE FROM health_data WHERE id = ?", [id], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'Record not found' });
-        res.json({ message: 'Deletion successful', deletedCount: this.changes });
-    });
+    try {
+        const result = isPostgres()
+            ? await run("DELETE FROM health_data WHERE id = $1", [id])
+            : await run("DELETE FROM health_data WHERE id = ?", [id]);
+        const deleted = isPostgres() ? result.rowCount : result.changes;
+        if (!deleted) return res.status(404).json({ error: 'Record not found' });
+        res.json({ message: 'Deletion successful', deletedCount: deleted });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Bulk delete records
-app.post('/api/data/delete-bulk', (req, res) => {
+app.post('/api/data/delete-bulk', async (req, res) => {
     const { ids } = req.body;
     if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: 'IDs array required' });
+    if (ids.length === 0) return res.json({ message: 'No records selected', deletedCount: 0 });
 
-    const placeholders = ids.map(() => '?').join(',');
-    db.run(`DELETE FROM health_data WHERE id IN (${placeholders})`, ids, function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: 'Bulk deletion successful', deletedCount: this.changes });
-    });
+    try {
+        if (isPostgres()) {
+            const result = await run("DELETE FROM health_data WHERE id = ANY($1::int[])", [ids]);
+            return res.json({ message: 'Bulk deletion successful', deletedCount: result.rowCount });
+        }
+
+        const placeholders = buildSqlPlaceholders(ids.length);
+        const result = await run(`DELETE FROM health_data WHERE id IN (${placeholders})`, ids);
+        res.json({ message: 'Bulk deletion successful', deletedCount: result.changes });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Daily notes
+app.get('/api/notes', async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit || '30', 10), 200);
+    try {
+        const rows = isPostgres()
+            ? await all("SELECT * FROM daily_notes ORDER BY created_at DESC LIMIT $1", [limit])
+            : await all("SELECT * FROM daily_notes ORDER BY created_at DESC LIMIT ?", [limit]);
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/notes', async (req, res) => {
+    const text = (req.body.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'Note text required' });
+    try {
+        if (isPostgres()) {
+            const saved = await run("INSERT INTO daily_notes (note_text) VALUES ($1) RETURNING *", [text]);
+            return res.json(saved.rows[0]);
+        }
+        const saved = await run("INSERT INTO daily_notes (note_text) VALUES (?)", [text]);
+        const rows = await all("SELECT * FROM daily_notes WHERE id = ?", [saved.lastID]);
+        res.json(rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Medical timeline
+app.get('/api/timeline', async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+    try {
+        const rows = isPostgres()
+            ? await all("SELECT * FROM medical_timeline ORDER BY event_date DESC, created_at DESC LIMIT $1", [limit])
+            : await all("SELECT * FROM medical_timeline ORDER BY event_date DESC, created_at DESC LIMIT ?", [limit]);
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/timeline', async (req, res) => {
+    const eventDate = req.body.eventDate;
+    const title = (req.body.title || '').trim();
+    const details = (req.body.details || '').trim();
+    const category = (req.body.category || '').trim();
+    if (!eventDate || !title) return res.status(400).json({ error: 'eventDate and title required' });
+
+    try {
+        if (isPostgres()) {
+            const saved = await run(
+                "INSERT INTO medical_timeline (event_date, category, title, details) VALUES ($1, $2, $3, $4) RETURNING *",
+                [eventDate, category || null, title, details || null]
+            );
+            return res.json(saved.rows[0]);
+        }
+        const saved = await run(
+            "INSERT INTO medical_timeline (event_date, category, title, details) VALUES (?, ?, ?, ?)",
+            [eventDate, category || null, title, details || null]
+        );
+        const rows = await all("SELECT * FROM medical_timeline WHERE id = ?", [saved.lastID]);
+        res.json(rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Comprehensive AI Coach Synthesis
 app.post('/api/ai/coach', async (req, res) => {
-    const { metrics, medicalHistory, ecgHistory, cdaHistory } = req.body;
+    const { metrics, medicalHistory, ecgHistory, cdaHistory, dailyNote, timeline } = req.body;
 
     try {
         const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -228,6 +306,12 @@ app.post('/api/ai/coach', async (req, res) => {
             
             4. DAILY ACTIVITY METRICS:
             ${JSON.stringify(metrics)}
+
+            5. DAILY SYMPTOMS / FEELINGS (Latest note):
+            ${JSON.stringify(dailyNote)}
+
+            6. MEDICAL TIMELINE (Most recent events):
+            ${JSON.stringify((timeline || []).slice(0, 15))}
             
             OBJECTIVE:
             1. Synthesize a comprehensive, "True Picture" health status. 
@@ -277,6 +361,17 @@ if (fs.existsSync(frontendPath)) {
     });
 }
 
-app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
-});
+const startServer = async () => {
+    try {
+        await initDb();
+        console.log(`Database initialized (${isPostgres() ? 'Postgres' : 'SQLite'})`);
+        app.listen(port, () => {
+            console.log(`Server running on port ${port}`);
+        });
+    } catch (err) {
+        console.error('Database initialization failed:', err);
+        process.exit(1);
+    }
+};
+
+startServer();

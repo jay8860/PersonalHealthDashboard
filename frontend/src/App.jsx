@@ -52,7 +52,7 @@ import {
   Cell
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadFiles, getHealthData, deleteRecord, getDeepAnalysis, deleteBulk } from './api';
+import { uploadFiles, getHealthData, deleteRecord, getDeepAnalysis, deleteBulk, getDailyNotes, createDailyNote, getTimeline, createTimelineEntry } from './api';
 
 // --- Configuration for Health Metrics ---
 const metricConfig = {
@@ -124,6 +124,17 @@ function App() {
   const [isDragActive, setIsDragActive] = useState(false);
   const [averageSummary, setAverageSummary] = useState('');
   const [copyLabel, setCopyLabel] = useState('Copy');
+  const [dailyNoteInput, setDailyNoteInput] = useState('');
+  const [dailyNotes, setDailyNotes] = useState([]);
+  const [timelineEntries, setTimelineEntries] = useState([]);
+  const [timelineForm, setTimelineForm] = useState({
+    eventDate: '',
+    category: 'Illness',
+    title: '',
+    details: ''
+  });
+  const [isSavingNote, setIsSavingNote] = useState(false);
+  const [isSavingTimeline, setIsSavingTimeline] = useState(false);
   const fileInputRef = useRef(null);
 
   const groupHistoryByDate = (history) => {
@@ -138,6 +149,8 @@ function App() {
 
   useEffect(() => {
     fetchHistory();
+    fetchNotes();
+    fetchTimeline();
     // Auto-refresh every 30s to see new data
     const interval = setInterval(fetchHistory, 30000);
     return () => clearInterval(interval);
@@ -149,6 +162,24 @@ function App() {
       setHistory(data);
     } catch (err) {
       console.error("Failed to fetch history", err);
+    }
+  };
+
+  const fetchNotes = async () => {
+    try {
+      const data = await getDailyNotes(20);
+      setDailyNotes(data);
+    } catch (err) {
+      console.error("Failed to fetch notes", err);
+    }
+  };
+
+  const fetchTimeline = async () => {
+    try {
+      const data = await getTimeline(50);
+      setTimelineEntries(data);
+    } catch (err) {
+      console.error("Failed to fetch timeline", err);
     }
   };
 
@@ -280,6 +311,47 @@ function App() {
     }
   };
 
+  const handleSaveNote = async () => {
+    const text = dailyNoteInput.trim();
+    if (!text) return;
+    setIsSavingNote(true);
+    try {
+      await createDailyNote(text);
+      setDailyNoteInput('');
+      fetchNotes();
+    } catch (err) {
+      alert("Failed to save note: " + (err.response?.data?.error || err.message));
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
+
+  const handleTimelineChange = (field, value) => {
+    setTimelineForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveTimeline = async () => {
+    if (!timelineForm.eventDate || !timelineForm.title.trim()) {
+      alert("Please add a date and a short title.");
+      return;
+    }
+    setIsSavingTimeline(true);
+    try {
+      await createTimelineEntry({
+        eventDate: timelineForm.eventDate,
+        category: timelineForm.category,
+        title: timelineForm.title.trim(),
+        details: timelineForm.details.trim()
+      });
+      setTimelineForm({ eventDate: '', category: 'Illness', title: '', details: '' });
+      fetchTimeline();
+    } catch (err) {
+      alert("Failed to save timeline entry: " + (err.response?.data?.error || err.message));
+    } finally {
+      setIsSavingTimeline(false);
+    }
+  };
+
   // Process history to get the latest health data and clinical history
   useEffect(() => {
     if (history.length > 0) {
@@ -312,7 +384,8 @@ function App() {
       if (Object.keys(healthMetrics).length > 0) {
         setIsAnalyzing(true);
         try {
-          const result = await getDeepAnalysis(healthMetrics, medicalHistory, ecgHistory, cdaHistory);
+          const latestNote = dailyNotes[0] || null;
+          const result = await getDeepAnalysis(healthMetrics, medicalHistory, ecgHistory, cdaHistory, latestNote, timelineEntries);
           setDeepAnalysis(result);
         } catch (e) {
           console.error("Deep analysis failed", e);
@@ -326,7 +399,7 @@ function App() {
       console.log("Deep Analysis Trigger: Conditions met. history:", history.length, "metrics:", Object.keys(healthMetrics).length);
       fetchDeepAnalysis();
     }
-  }, [activeTab, healthMetrics, medicalHistory, history, deepAnalysis]);
+  }, [activeTab, healthMetrics, medicalHistory, history, deepAnalysis, dailyNotes, timelineEntries]);
 
   // --- AI Insight Generator ---
   const generateInsights = (metrics, medHistory = []) => {
@@ -1123,6 +1196,136 @@ function App() {
                       <Plus size={18} />
                       Select Files
                     </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+                    <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm">
+                      <div className="flex items-center gap-4 mb-6">
+                        <div className="bg-blue-50 p-3 rounded-2xl text-blue-600">
+                          <Brain size={22} />
+                        </div>
+                        <div>
+                          <h4 className="text-2xl font-black text-slate-900">How are you feeling today?</h4>
+                          <p className="text-slate-400 text-sm font-bold">Daily symptoms / mood check‑in</p>
+                        </div>
+                      </div>
+                      <textarea
+                        value={dailyNoteInput}
+                        onChange={(e) => setDailyNoteInput(e.target.value)}
+                        placeholder="Example: Feeling feverish with sore throat. Slept poorly, low energy..."
+                        className="w-full h-32 rounded-2xl border border-slate-100 p-4 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <div className="flex justify-end mt-4">
+                        <button
+                          onClick={handleSaveNote}
+                          disabled={isSavingNote}
+                          className="px-6 py-3 rounded-2xl bg-slate-900 text-white font-black text-sm hover:bg-blue-600 transition-all disabled:opacity-50"
+                        >
+                          {isSavingNote ? 'Saving...' : 'Save Today’s Note'}
+                        </button>
+                      </div>
+
+                      {dailyNotes.length > 0 && (
+                        <div className="mt-6 space-y-3">
+                          <p className="text-xs uppercase tracking-widest font-black text-slate-400">Recent Notes</p>
+                          {dailyNotes.slice(0, 3).map((note) => (
+                            <div key={note.id} className="p-4 rounded-2xl bg-white border border-slate-100">
+                              <p className="text-xs font-black text-slate-400 mb-2">
+                                {new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                              </p>
+                              <p className="text-sm font-bold text-slate-700">{note.note_text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm">
+                      <div className="flex items-center gap-4 mb-6">
+                        <div className="bg-indigo-50 p-3 rounded-2xl text-indigo-600">
+                          <ClipboardList size={22} />
+                        </div>
+                        <div>
+                          <h4 className="text-2xl font-black text-slate-900">Medical Timeline</h4>
+                          <p className="text-slate-400 text-sm font-bold">Add surgeries, episodes, medications, etc.</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Date</label>
+                          <input
+                            type="date"
+                            value={timelineForm.eventDate}
+                            onChange={(e) => handleTimelineChange('eventDate', e.target.value)}
+                            className="w-full mt-2 rounded-2xl border border-slate-100 p-3 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Category</label>
+                          <select
+                            value={timelineForm.category}
+                            onChange={(e) => handleTimelineChange('category', e.target.value)}
+                            className="w-full mt-2 rounded-2xl border border-slate-100 p-3 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option>Illness</option>
+                            <option>Surgery</option>
+                            <option>Medication</option>
+                            <option>Allergy</option>
+                            <option>Episode</option>
+                            <option>Other</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="mt-4">
+                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Title</label>
+                        <input
+                          type="text"
+                          value={timelineForm.title}
+                          onChange={(e) => handleTimelineChange('title', e.target.value)}
+                          placeholder="e.g., Tonsillitis treatment, Knee surgery"
+                          className="w-full mt-2 rounded-2xl border border-slate-100 p-3 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div className="mt-4">
+                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Details</label>
+                        <textarea
+                          value={timelineForm.details}
+                          onChange={(e) => handleTimelineChange('details', e.target.value)}
+                          placeholder="Add symptoms, medications, doctor notes, etc."
+                          className="w-full mt-2 h-24 rounded-2xl border border-slate-100 p-3 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div className="flex justify-end mt-4">
+                        <button
+                          onClick={handleSaveTimeline}
+                          disabled={isSavingTimeline}
+                          className="px-6 py-3 rounded-2xl bg-slate-900 text-white font-black text-sm hover:bg-indigo-600 transition-all disabled:opacity-50"
+                        >
+                          {isSavingTimeline ? 'Saving...' : 'Add to Timeline'}
+                        </button>
+                      </div>
+
+                      {timelineEntries.length > 0 && (
+                        <div className="mt-6 space-y-3">
+                          <p className="text-xs uppercase tracking-widest font-black text-slate-400">Recent Timeline</p>
+                          {timelineEntries.slice(0, 4).map((entry) => (
+                            <div key={entry.id} className="p-4 rounded-2xl bg-white border border-slate-100">
+                              <div className="flex items-center justify-between mb-2">
+                                <p className="text-xs font-black text-slate-400">
+                                  {new Date(entry.event_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                                </p>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-500 bg-indigo-50 px-2 py-1 rounded-full">
+                                  {entry.category || 'Other'}
+                                </span>
+                              </div>
+                              <p className="text-sm font-black text-slate-800">{entry.title}</p>
+                              {entry.details && <p className="text-xs font-bold text-slate-500 mt-1">{entry.details}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="space-y-16">
