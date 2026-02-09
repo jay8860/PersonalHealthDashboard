@@ -60,10 +60,13 @@ const metricConfig = {
   heartRate: { label: 'Heart Rate', unit: 'bpm', icon: Activity, color: 'red' },
   restingHeartRate: { label: 'Resting HR', unit: 'bpm', icon: Heart, color: 'rose' },
   heartRateVariabilitySDNN: { label: 'HRV', unit: 'ms', icon: Activity, color: 'indigo' },
+  walkingHeartRateAverage: { label: 'Walking HR', unit: 'bpm', icon: Activity, color: 'orange' },
+  heartRateRecoveryOneMinute: { label: 'HR Recovery', unit: 'bpm', icon: Activity, color: 'emerald' },
   respiratoryRate: { label: 'Resp. Rate', unit: 'br/min', icon: Wind, color: 'blue' },
   vo2Max: { label: 'VO2 Max', unit: 'ml/kg', icon: Wind, color: 'emerald' },
   oxygenSaturation: { label: 'SpO2', unit: '%', icon: Droplet, color: 'cyan' },
   bodyTemperature: { label: 'Body Temp', unit: '°C', icon: Thermometer, color: 'orange' },
+  bloodGlucose: { label: 'Blood Glucose', unit: 'mg/dL', icon: Droplet, color: 'rose' },
 
   // Activity
   stepCount: { label: 'Steps', unit: 'steps', icon: Footprints, color: 'yellow' },
@@ -73,11 +76,14 @@ const metricConfig = {
   basalEnergyBurned: { label: 'Resting Cal', unit: 'kcal', icon: Zap, color: 'purple' },
   appleExerciseTime: { label: 'Exercise', unit: 'min', icon: Timer, color: 'green' },
   standTime: { label: 'Stand Time', unit: 'min', icon: User, color: 'blue' },
+  dietaryEnergyConsumed: { label: 'Dietary Cal', unit: 'kcal', icon: Zap, color: 'amber' },
+  dietaryWater: { label: 'Water', unit: 'ml', icon: Droplet, color: 'cyan' },
 
   // Body
   bodyMass: { label: 'Weight', unit: 'kg', icon: Scale, color: 'blue' },
   bodyMassIndex: { label: 'BMI', unit: '', icon: Scale, color: 'indigo' },
   leanBodyMass: { label: 'Lean Mass', unit: 'kg', icon: User, color: 'cyan' },
+  bodyFatPercentage: { label: 'Body Fat', unit: '%', icon: Scale, color: 'orange' },
   height: { label: 'Height', unit: 'm', icon: Ruler, color: 'teal' },
   waistCircumference: { label: 'Waist', unit: 'cm', icon: Ruler, color: 'violet' },
 
@@ -103,26 +109,21 @@ function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadedResult, setUploadedResult] = useState(null);
+  const [uploadedResults, setUploadedResults] = useState([]);
   const [history, setHistory] = useState([]);
   const [medicalHistory, setMedicalHistory] = useState([]);
   const [deepAnalysis, setDeepAnalysis] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [trendMetric, setTrendMetric] = useState('stepCount');
   const [trendTimeframe, setTrendTimeframe] = useState('Week');
   const [healthMetrics, setHealthMetrics] = useState({});
-  const [mockData, setMockData] = useState([
-    { name: '00:00', value: 0 },
-    { name: '04:00', value: 0 },
-    { name: '08:00', value: 0 },
-    { name: '12:00', value: 0 },
-    { name: '16:00', value: 0 },
-    { name: '20:00', value: 0 },
-    { name: '23:59', value: 0 },
-  ]);
   const [ecgHistory, setEcgHistory] = useState([]);
   const [cdaHistory, setCdaHistory] = useState([]);
   const [historicalData, setHistoricalData] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [uploadErrors, setUploadErrors] = useState([]);
+  const [isDragActive, setIsDragActive] = useState(false);
+  const [averageSummary, setAverageSummary] = useState('');
+  const [copyLabel, setCopyLabel] = useState('Copy');
   const fileInputRef = useRef(null);
 
   const groupHistoryByDate = (history) => {
@@ -191,40 +192,91 @@ function App() {
     try {
       await deleteRecord(id);
       fetchHistory();
-      if (uploadedResult && uploadedResult.id === id) setUploadedResult(null);
+      if (uploadedResult && uploadedResult.id === id) closeResults();
     } catch (err) {
       alert("Failed to delete record: " + err.message);
     }
   };
 
-  const handleFileUpload = async (event) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
+  const uploadSelectedFiles = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
 
     setIsUploading(true);
     setUploadProgress(0);
+    setUploadErrors([]);
     try {
       const response = await uploadFiles(files, (progress) => {
         setUploadProgress(progress);
       });
 
-      if (response.results && response.results.length > 0) {
-        setUploadedResult(response.results[0]);
+      const results = response.results || [];
+      const errors = response.errors || [];
+
+      if (results.length > 0) {
+        setUploadedResults(results);
+        setUploadedResult(results[0]);
 
         // Immediate state update for responsive UI
-        response.results.forEach(res => {
+        results.forEach(res => {
           if (res.type === 'medical_report') setMedicalHistory(prev => [res.result, ...prev]);
           if (res.type === 'electrocardiogram') setEcgHistory(prev => [res.result, ...prev]);
           if (res.type === 'cda_document') setCdaHistory(prev => [res.result, ...prev]);
         });
       }
+
+      if (errors.length > 0) {
+        setUploadErrors(errors);
+      }
+
       fetchHistory();
     } catch (err) {
       const errorMsg = err.response?.data?.details || err.response?.data?.error || err.message;
-      alert("Error: " + errorMsg);
+      setUploadErrors([{ file: 'Upload', error: errorMsg }]);
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
+    }
+  };
+
+  const handleFileUpload = async (event) => {
+    await uploadSelectedFiles(event.target.files);
+    event.target.value = '';
+  };
+
+  const handleDrop = async (event) => {
+    event.preventDefault();
+    setIsDragActive(false);
+    await uploadSelectedFiles(event.dataTransfer.files);
+  };
+
+  const handleDragOver = (event) => {
+    event.preventDefault();
+    setIsDragActive(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragActive(false);
+  };
+
+  const openResult = (item) => {
+    setUploadedResults([]);
+    setUploadedResult(item);
+  };
+
+  const closeResults = () => {
+    setUploadedResult(null);
+    setUploadedResults([]);
+  };
+
+  const handleCopySummary = async () => {
+    try {
+      await navigator.clipboard.writeText(averageSummary);
+      setCopyLabel('Copied');
+      setTimeout(() => setCopyLabel('Copy'), 2000);
+    } catch (err) {
+      setCopyLabel('Copy failed');
+      setTimeout(() => setCopyLabel('Copy'), 2000);
     }
   };
 
@@ -247,7 +299,7 @@ function App() {
       setCdaHistory(cdas);
 
       // 4. Extract standard Apple Health metrics from the latest upload
-      const latestAppleHealth = history.find(item => item.type === 'apple_health' || item.type === 'cda_document');
+      const latestAppleHealth = history.find(item => item.type === 'apple_health');
       if (latestAppleHealth && latestAppleHealth.data) {
         processHealthData(latestAppleHealth.data);
       }
@@ -366,6 +418,195 @@ function App() {
   const [aiInsights, setAiInsights] = useState({ insights: [], suggestions: [] });
   const [dailyDate, setDailyDate] = useState("Today");
 
+  const highlightStyles = {
+    rose: { bg: 'bg-rose-50', border: 'border-rose-100', title: 'text-rose-800', desc: 'text-rose-700/80' },
+    emerald: { bg: 'bg-emerald-50', border: 'border-emerald-100', title: 'text-emerald-800', desc: 'text-emerald-700/80' },
+    indigo: { bg: 'bg-indigo-50', border: 'border-indigo-100', title: 'text-indigo-800', desc: 'text-indigo-700/80' },
+    purple: { bg: 'bg-purple-50', border: 'border-purple-100', title: 'text-purple-800', desc: 'text-purple-700/80' },
+    yellow: { bg: 'bg-yellow-50', border: 'border-yellow-100', title: 'text-yellow-800', desc: 'text-yellow-700/80' },
+    orange: { bg: 'bg-orange-50', border: 'border-orange-100', title: 'text-orange-800', desc: 'text-orange-700/80' }
+  };
+
+  const insightColorClass = {
+    rose: 'text-rose-400',
+    emerald: 'text-emerald-400',
+    purple: 'text-purple-400',
+    yellow: 'text-yellow-400',
+    orange: 'text-orange-400',
+    indigo: 'text-indigo-400',
+    blue: 'text-blue-400'
+  };
+
+  const activityMetricKeys = new Set([
+    'stepCount',
+    'distanceWalkingRunning',
+    'activeEnergyBurned',
+    'basalEnergyBurned',
+    'flightsClimbed',
+    'appleExerciseTime',
+    'standTime',
+    'dietaryEnergyConsumed',
+    'dietaryWater'
+  ]);
+
+  const trendConfigs = [
+    { key: 'stepCount', label: 'Steps', unit: 'steps', color: '#3b82f6', primary: true },
+    { key: 'heartRate', label: 'Heart Rate', unit: 'bpm', color: '#ef4444', primary: true },
+    { key: 'sleep', label: 'Sleep', unit: 'h', color: '#6366f1', primary: true },
+    { key: 'activeEnergyBurned', label: 'Active Calories', unit: 'kcal', color: '#f97316', primary: true },
+    { key: 'bodyMass', label: 'Weight', unit: 'kg', color: '#0ea5e9', primary: true },
+
+    { key: 'restingHeartRate', label: 'Resting HR', unit: 'bpm', color: '#f43f5e' },
+    { key: 'heartRateVariabilitySDNN', label: 'HRV', unit: 'ms', color: '#8b5cf6' },
+    { key: 'respiratoryRate', label: 'Resp. Rate', unit: 'br/min', color: '#06b6d4' },
+    { key: 'vo2Max', label: 'VO2 Max', unit: 'ml/kg', color: '#10b981' },
+    { key: 'oxygenSaturation', label: 'SpO2', unit: '%', color: '#22d3ee' },
+    { key: 'bloodGlucose', label: 'Blood Glucose', unit: 'mg/dL', color: '#fb7185' },
+    { key: 'bloodPressureSystolic', label: 'BP Systolic', unit: 'mmHg', color: '#f59e0b' },
+    { key: 'bloodPressureDiastolic', label: 'BP Diastolic', unit: 'mmHg', color: '#f59e0b' },
+    { key: 'walkingHeartRateAverage', label: 'Walking HR', unit: 'bpm', color: '#f97316' },
+    { key: 'heartRateRecoveryOneMinute', label: 'HR Recovery', unit: 'bpm', color: '#22c55e' },
+    { key: 'bodyFatPercentage', label: 'Body Fat', unit: '%', color: '#f59e0b' },
+    { key: 'distanceWalkingRunning', label: 'Distance', unit: 'km', color: '#84cc16' },
+    { key: 'appleExerciseTime', label: 'Exercise', unit: 'min', color: '#22c55e' },
+    { key: 'standTime', label: 'Stand Time', unit: 'min', color: '#0ea5e9' },
+    { key: 'dietaryEnergyConsumed', label: 'Dietary Cal', unit: 'kcal', color: '#f97316' },
+    { key: 'dietaryWater', label: 'Water', unit: 'ml', color: '#38bdf8' }
+  ];
+
+  const getMetricValue = (day, key) => {
+    if (!day || day[key] === undefined || day[key] === null) return null;
+    const raw = day[key];
+    if (typeof raw === 'object') {
+      if (activityMetricKeys.has(key)) return raw.sum;
+      return raw.sum / raw.count;
+    }
+    return raw;
+  };
+
+  const normalizeTrendValue = (key, value) => {
+    if (value === null || value === undefined || Number.isNaN(value)) return null;
+    if (key === 'sleep') return Math.round((value / 60) * 10) / 10;
+    if (activityMetricKeys.has(key)) return Math.round(value);
+    return Math.round(value * 10) / 10;
+  };
+
+  const formatTrendLabel = (dateStr, timeframe) => {
+    if (!dateStr) return '';
+    if (timeframe === 'Year') {
+      return new Date(dateStr + "-01").toLocaleDateString(undefined, { month: 'short' });
+    }
+    return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  };
+
+  const buildTrendSeries = (metricKey) => {
+    if (!historicalData || historicalData.length === 0) return [];
+    const source = [...historicalData];
+
+    if (trendTimeframe === 'Year') {
+      const groups = {};
+      source.forEach(day => {
+        const month = day.date.substring(0, 7);
+        const raw = getMetricValue(day, metricKey);
+        if (raw === null) return;
+        if (!groups[month]) groups[month] = [];
+        groups[month].push(raw);
+      });
+
+      return Object.entries(groups)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([month, values]) => {
+          const avg = values.reduce((a, b) => a + b, 0) / values.length;
+          return {
+            name: formatTrendLabel(month, 'Year'),
+            value: normalizeTrendValue(metricKey, avg)
+          };
+        });
+    }
+
+    const windowSize = trendTimeframe === 'Week' ? 7 : 30;
+    const windowed = source.slice(-windowSize);
+    return windowed.map(day => {
+      const raw = getMetricValue(day, metricKey);
+      return {
+        name: formatTrendLabel(day.date, trendTimeframe),
+        value: normalizeTrendValue(metricKey, raw)
+      };
+    });
+  };
+
+  const metricMeta = {
+    sleep: { label: 'Sleep', unit: 'h' },
+    ...metricConfig
+  };
+
+  const formatMetricValue = (value) => {
+    if (value === null || value === undefined || Number.isNaN(value)) return null;
+    if (Number.isInteger(value)) return value.toString();
+    return value.toFixed(1);
+  };
+
+  const buildAverageSummary = () => {
+    if (!historicalData || historicalData.length === 0) {
+      return 'Upload an Apple Health export (XML) to generate monthly and yearly averages.';
+    }
+
+    const sorted = [...historicalData].sort((a, b) => a.date.localeCompare(b.date));
+    const endDate = new Date(sorted[sorted.length - 1].date);
+    const ranges = [
+      { label: 'Last 30 days', days: 30 },
+      { label: 'Last 365 days', days: 365 }
+    ];
+
+    const metricKeys = ['sleep', ...new Set(trendConfigs.map(t => t.key)), ...Object.keys(metricConfig).filter(k => !trendConfigs.some(t => t.key === k))];
+
+    const lines = [];
+    lines.push('Health Metrics Averages');
+    lines.push(`Data window ends on ${endDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`);
+    lines.push('Missing days are ignored (no zero padding).');
+
+    ranges.forEach(range => {
+      const startDate = new Date(endDate);
+      startDate.setDate(startDate.getDate() - (range.days - 1));
+
+      const rangeDays = sorted.filter(day => {
+        const d = new Date(day.date);
+        return d >= startDate && d <= endDate;
+      });
+
+      lines.push('');
+      lines.push(`${range.label} (${startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`);
+
+      metricKeys.forEach(key => {
+        const values = rangeDays
+          .map(day => getMetricValue(day, key))
+          .filter(val => val !== null && val !== undefined && !Number.isNaN(val));
+
+        if (values.length === 0) return;
+
+        const avg = values.reduce((a, b) => a + b, 0) / values.length;
+        const normalized = normalizeTrendValue(key, avg);
+        const formatted = formatMetricValue(normalized);
+        if (formatted === null) return;
+
+        const label = metricMeta[key]?.label || key;
+        const unit = metricMeta[key]?.unit ? ` ${metricMeta[key].unit}` : '';
+        lines.push(`- ${label}: ${formatted}${unit} (from ${values.length} days)`);
+      });
+    });
+
+    return lines.join('\n');
+  };
+
+  useEffect(() => {
+    setAverageSummary(buildAverageSummary());
+  }, [historicalData]);
+
+  useEffect(() => {
+    const next = generateInsights(healthMetrics, medicalHistory);
+    setAiInsights(next);
+  }, [healthMetrics, medicalHistory]);
+
   const processHealthData = (data) => {
     const parseDate = (dStr) => dStr ? new Date(dStr.replace(' +', '+')) : new Date();
     const formatTime = (dObj) => dObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -381,24 +622,18 @@ function App() {
     const metricsToUse = data.metrics || data;
 
     Object.keys(metricConfig).forEach(key => {
-      if (metricsToUse[key] !== undefined) {
-        const val = typeof metricsToUse[key] === 'object' ? (metricsToUse[key].sum / metricsToUse[key].count) : metricsToUse[key];
-        newMetrics[key] = typeof val === 'number' ? Math.round(val) : val;
-        newMetrics[`${key}_context`] = "Latest";
+      if (metricsToUse[key] !== undefined && metricsToUse[key] !== null) {
+        const raw = metricsToUse[key];
+        const val = typeof raw === 'object' ? (raw.sum / raw.count) : raw;
+        if (val !== undefined && val !== null && !Number.isNaN(val)) {
+          newMetrics[key] = typeof val === 'number' ? Math.round(val) : val;
+          newMetrics[`${key}_context`] = "Latest";
+        }
       }
     });
 
     if (newMetrics.bloodPressureSystolic && newMetrics.bloodPressureDiastolic) {
       newMetrics.bp = `${newMetrics.bloodPressureSystolic}/${newMetrics.bloodPressureDiastolic}`;
-    }
-
-    if (data.history && data.history.length > 0) {
-      const latest = data.history[data.history.length - 1];
-      const chartData = data.history.slice(-14).map(h => ({
-        name: h.date.split('-').slice(1).join('/'),
-        value: h.stepCount ? h.stepCount.sum : 0
-      }));
-      setMockData(chartData);
     }
 
     setHealthMetrics(prev => ({ ...prev, ...newMetrics }));
@@ -407,9 +642,19 @@ function App() {
 
 
 
+  const latestMedicalReport = medicalHistory[0] || null;
+  const latestReportVitals = latestMedicalReport?.vitals || [];
+
   return (
     <div className="min-h-screen bg-[#f8fafc] font-sans">
-      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" multiple accept=".xml,.csv,.xlsx,.xls,image/*,application/pdf,.txt,text/plain" />
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        className="hidden"
+        multiple
+        accept=".xml,.csv,.xlsx,.xls,.pdf,.txt,.heic,.heif,image/*,application/pdf,text/plain"
+      />
 
       {/* Sidebar - Modern Floating Style */}
       <nav className="fixed left-6 top-6 bottom-6 w-24 lg:w-72 bg-white rounded-[3rem] shadow-2xl z-50 border border-slate-100 flex flex-col p-8 transition-all duration-500 overflow-hidden">
@@ -489,10 +734,26 @@ function App() {
                 className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-bold flex items-center gap-3 hover:bg-blue-600 transition-all shadow-xl shadow-slate-900/10 active:scale-95 disabled:opacity-50"
               >
                 {isUploading ? <Loader2 className="animate-spin" /> : <Plus size={20} />}
-                {isUploading ? "Please Wait..." : "Upload New"}
+                {isUploading ? "Please Wait..." : "Upload Files"}
               </button>
             </div>
           </header>
+
+          {uploadErrors.length > 0 && (
+            <div className="mb-10 rounded-[2rem] border border-rose-100 bg-rose-50 px-6 py-5">
+              <div className="flex items-center gap-3 text-rose-700 font-black mb-3">
+                <AlertCircle size={18} />
+                Some files failed to upload
+              </div>
+              <div className="space-y-2">
+                {uploadErrors.map((err, i) => (
+                  <div key={i} className="text-sm font-bold text-rose-700/80">
+                    {err.file}: {err.error}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <AnimatePresence mode="wait">
             {activeTab === 'overview' && (
@@ -505,87 +766,25 @@ function App() {
               >
                 {/* Stats Row */}
                 <div className="lg:col-span-8 grid grid-cols-1 gap-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                    {/* Dynamic Vitals Cards */}
-                    {Object.entries(healthMetrics).map(([key, value]) => {
-                      if (key === 'sleep' || key === 'sleepBreakdown') return null; // Handle sleep separately
-                      const config = metricConfig[key];
-                      if (!config) return null;
-
-                      return (
-                        <VitalsCard
-                          key={key}
-                          icon={config.icon}
-                          label={config.label}
-                          value={value}
-                          unit={config.unit}
-                          context={healthMetrics[`${key}_context`]}
-                          color={config.color}
-                        />
-                      );
-                    })}
-
-                    {/* ECG Summary if exists */}
-                    {ecgHistory.length > 0 && (
-                      <div
-                        onClick={() => setUploadedResult({ id: 'latest_ecg', type: 'electrocardiogram', data: ecgHistory[0] })}
-                        className="col-span-full md:col-span-1 lg:col-span-2 glass-card p-8 rounded-[3rem] cursor-pointer hover:border-rose-200 transition-all border-2 border-transparent relative overflow-hidden group/ecg"
+                  <div className="glass-card p-10 rounded-[3rem]">
+                    <div className="flex items-center justify-between mb-6">
+                      <div>
+                        <h3 className="text-2xl font-black text-slate-900">Monthly & Yearly Averages</h3>
+                        <p className="text-slate-400 text-sm font-medium">Copyable summary based on uploaded Apple Health data.</p>
+                      </div>
+                      <button
+                        onClick={handleCopySummary}
+                        className="px-5 py-2 rounded-2xl bg-slate-900 text-white text-xs font-black uppercase tracking-widest hover:bg-blue-600 transition-all"
                       >
-                        <div className="flex items-center gap-4 mb-4 relative z-10">
-                          <div className="bg-rose-50 text-rose-600 p-3 rounded-2xl group-hover/ecg:scale-110 transition-transform">
-                            <Heart size={24} fill="currentColor" />
-                          </div>
-                          <div>
-                            <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Latest Rhythm</p>
-                            <h4 className="text-lg font-black text-slate-900">{ecgHistory[0].metadata.classification}</h4>
-                          </div>
-                        </div>
-                        <div className="h-16 opacity-30 group-hover/ecg:opacity-60 transition-opacity">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={ecgHistory[0].samples.slice(0, 40).map((v, i) => ({ i, v }))}>
-                              <Line type="monotone" dataKey="v" stroke="#f43f5e" strokeWidth={3} dot={false} isAnimationActive={false} />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        </div>
-                        <div className="absolute top-0 right-0 p-4">
-                          <Zap size={14} className="text-rose-200" />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Sleep Section (if available) */}
-                  {healthMetrics.sleep && (
-                    <div className="glass-card p-8 rounded-[3rem] relative overflow-hidden">
-                      <div className="flex items-center gap-4 mb-6 relative z-10">
-                        <div className="bg-indigo-600 p-3 rounded-2xl text-white shadow-lg shadow-indigo-500/30">
-                          <Moon size={24} />
-                        </div>
-                        <h3 className="text-2xl font-black text-slate-900">Sleep Analysis</h3>
-                        <span className="ml-auto text-4xl font-black text-indigo-600 tracking-tighter">{healthMetrics.sleep}</span>
-                      </div>
-
-                      {healthMetrics.sleepBreakdown && (
-                        <div className="grid grid-cols-3 gap-4 relative z-10">
-                          <div className="bg-indigo-50 p-4 rounded-2xl text-center">
-                            <p className="text-xs uppercase font-bold text-indigo-400 mb-1">Deep</p>
-                            <p className="font-black text-indigo-900 text-lg">{Math.round(healthMetrics.sleepBreakdown.deep / 60 * 10) / 10}h</p>
-                          </div>
-                          <div className="bg-purple-50 p-4 rounded-2xl text-center">
-                            <p className="text-xs uppercase font-bold text-purple-400 mb-1">REM</p>
-                            <p className="font-black text-purple-900 text-lg">{Math.round(healthMetrics.sleepBreakdown.rem / 60 * 10) / 10}h</p>
-                          </div>
-                          <div className="bg-blue-50 p-4 rounded-2xl text-center">
-                            <p className="text-xs uppercase font-bold text-blue-400 mb-1">Core</p>
-                            <p className="font-black text-blue-900 text-lg">{Math.round((healthMetrics.sleepBreakdown.total - healthMetrics.sleepBreakdown.deep - healthMetrics.sleepBreakdown.rem) / 60 * 10) / 10}h</p>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Decorative Background */}
-                      <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-indigo-600 opacity-5 rounded-full blur-3xl"></div>
+                        {copyLabel}
+                      </button>
                     </div>
-                  )}
+                    <textarea
+                      className="w-full h-64 md:h-72 rounded-2xl border border-slate-100 p-5 text-sm font-medium text-slate-700 bg-white shadow-inner resize-none"
+                      value={averageSummary}
+                      readOnly
+                    />
+                  </div>
 
                   {/* Chart Card */}
                   <div className="glass-card p-10 rounded-[3rem]">
@@ -595,17 +794,6 @@ function App() {
                         <p className="text-slate-400 text-sm font-medium">Long-term tracking from all health uploads</p>
                       </div>
                       <div className="flex items-center gap-4">
-                        <select
-                          value={trendMetric}
-                          onChange={(e) => setTrendMetric(e.target.value)}
-                          className="bg-slate-50 border border-slate-100 px-4 py-2 rounded-xl text-xs font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        >
-                          <option value="stepCount">Steps</option>
-                          <option value="heartRate">Heart Rate</option>
-                          <option value="heartRateVariabilitySDNN">HRV</option>
-                          <option value="sleep">Sleep</option>
-                          <option value="bodyMass">Weight</option>
-                        </select>
                         <div className="flex bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
                           {['Week', 'Month', 'Year'].map(t => (
                             <button
@@ -619,71 +807,140 @@ function App() {
                         </div>
                       </div>
                     </div>
-                    <div className="h-[350px] w-full" style={{ height: 350 }}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={(() => {
-                          let source = [];
-                          if (trendTimeframe === 'Week') source = historicalData.slice(-7);
-                          else if (trendTimeframe === 'Month') source = historicalData.slice(-30);
-                          else {
-                            const groups = {};
-                            historicalData.forEach(h => {
-                              const month = h.date.substring(0, 7);
-                              if (!groups[month]) groups[month] = { date: month, values: [] };
-                              let val = 0;
-                              if (h[trendMetric]) {
-                                const isActivity = ['stepCount', 'distanceWalkingRunning', 'activeEnergyBurned', 'flightsClimbed'].includes(trendMetric);
-                                val = typeof h[trendMetric] === 'object'
-                                  ? (isActivity ? h[trendMetric].sum : h[trendMetric].sum / h[trendMetric].count)
-                                  : h[trendMetric];
-                              }
-                              groups[month].values.push(val);
-                            });
-                            source = Object.values(groups).map(g => ({
-                              date: g.date,
-                              computedValue: g.values.reduce((a, b) => a + b, 0) / g.values.length
-                            }));
-                          }
-
-                          return source.map(h => {
-                            let rawValue = h.computedValue !== undefined ? h.computedValue : 0;
-                            if (h.computedValue === undefined && h[trendMetric]) {
-                              const isActivity = ['stepCount', 'distanceWalkingRunning', 'activeEnergyBurned', 'flightsClimbed'].includes(trendMetric);
-                              rawValue = typeof h[trendMetric] === 'object'
-                                ? (isActivity ? h[trendMetric].sum : h[trendMetric].sum / h[trendMetric].count)
-                                : h[trendMetric];
-                            }
-
-                            let finalValue = rawValue;
-                            if (trendMetric === 'sleep') finalValue = Math.round((rawValue / 60) * 10) / 10;
-                            else if (trendMetric === 'stepCount' || trendMetric === 'heartRate') finalValue = Math.round(rawValue);
-                            else finalValue = Math.round(rawValue * 10) / 10;
-
-                            return {
-                              name: trendTimeframe === 'Year' ? new Date(h.date + "-01").toLocaleDateString(undefined, { month: 'short' }) : h.date.split('-').slice(1).join('/'),
-                              value: finalValue,
-                              unit: trendMetric === 'sleep' ? 'h' : (metricConfig[trendMetric]?.unit || '')
-                            };
-                          });
-                        })()}>
-                          <defs>
-                            <linearGradient id="colorSteps" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
-                              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#e2e8f0" />
-                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 13, fontWeight: 600 }} dy={10} />
-                          <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 13, fontWeight: 600 }} dx={-10} />
-                          <Tooltip
-                            contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.15)', padding: '20px' }}
-                            itemStyle={{ fontWeight: 'bold' }}
-                          />
-                          <Area type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={5} fillOpacity={1} fill="url(#colorSteps)" animationDuration={2000} />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
+                    {historicalData.length === 0 && (
+                      <div className="text-center py-12 text-slate-400 font-bold">
+                        Upload an Apple Health export (XML) to see full trends.
+                      </div>
+                    )}
+                    {historicalData.length > 0 && (
+                      <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {trendConfigs.filter(t => t.primary).map((trend) => {
+                            const series = buildTrendSeries(trend.key);
+                            const hasData = series.some(point => point.value !== null && point.value !== undefined);
+                            if (!hasData) return null;
+                            const latestPoint = [...series].reverse().find(point => point.value !== null && point.value !== undefined);
+                            const latestValue = latestPoint ? latestPoint.value : '--';
+                            return (
+                              <div key={trend.key} className="bg-white rounded-[2.5rem] p-6 border border-slate-100 shadow-sm">
+                                <div className="flex items-center justify-between mb-4">
+                                  <div>
+                                    <p className="text-xs uppercase font-black text-slate-400 tracking-widest">{trend.label}</p>
+                                    <h4 className="text-2xl font-black text-slate-900">{latestValue} <span className="text-sm text-slate-400">{trend.unit}</span></h4>
+                                  </div>
+                                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: trend.color }} />
+                                </div>
+                                <div className="h-40">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={series}>
+                                      <defs>
+                                        <linearGradient id={`trend-${trend.key}`} x1="0" y1="0" x2="0" y2="1">
+                                          <stop offset="5%" stopColor={trend.color} stopOpacity={0.25} />
+                                          <stop offset="95%" stopColor={trend.color} stopOpacity={0} />
+                                        </linearGradient>
+                                      </defs>
+                                      <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#e2e8f0" />
+                                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11, fontWeight: 700 }} dy={6} />
+                                      <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 700 }} />
+                                      <Tooltip
+                                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.15)', padding: '12px' }}
+                                        itemStyle={{ fontWeight: 'bold' }}
+                                      />
+                                      <Area type="monotone" dataKey="value" stroke={trend.color} strokeWidth={3} fill={`url(#trend-${trend.key})`} connectNulls />
+                                    </AreaChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {trendConfigs.filter(t => !t.primary).map((trend) => {
+                            const series = buildTrendSeries(trend.key);
+                            const hasData = series.some(point => point.value !== null && point.value !== undefined);
+                            if (!hasData) return null;
+                            const latestPoint = [...series].reverse().find(point => point.value !== null && point.value !== undefined);
+                            const latestValue = latestPoint ? latestPoint.value : '--';
+                            return (
+                              <div key={trend.key} className="bg-white rounded-[2.5rem] p-6 border border-slate-100 shadow-sm">
+                                <div className="flex items-center justify-between mb-4">
+                                  <div>
+                                    <p className="text-xs uppercase font-black text-slate-400 tracking-widest">{trend.label}</p>
+                                    <h4 className="text-2xl font-black text-slate-900">{latestValue} <span className="text-sm text-slate-400">{trend.unit}</span></h4>
+                                  </div>
+                                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: trend.color }} />
+                                </div>
+                                <div className="h-40">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={series}>
+                                      <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#e2e8f0" />
+                                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11, fontWeight: 700 }} dy={6} />
+                                      <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 700 }} />
+                                      <Tooltip
+                                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.15)', padding: '12px' }}
+                                        itemStyle={{ fontWeight: 'bold' }}
+                                      />
+                                      <Line type="monotone" dataKey="value" stroke={trend.color} strokeWidth={2.5} dot={false} connectNulls />
+                                    </LineChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
                   </div>
+
+                  {latestMedicalReport && (
+                    <div className="glass-card p-10 rounded-[3rem]">
+                      <div className="flex items-center gap-4 mb-6">
+                        <div className="bg-indigo-50 p-4 rounded-2xl text-indigo-600">
+                          <ClipboardList size={28} />
+                        </div>
+                        <div>
+                          <h4 className="font-black text-2xl text-slate-800">Latest Report Summary</h4>
+                          <p className="text-slate-400 text-sm font-bold">AI extracted from your most recent report</p>
+                        </div>
+                      </div>
+                      <p className="text-slate-600 font-medium leading-relaxed mb-6">
+                        {latestMedicalReport.summary || "Summary unavailable."}
+                      </p>
+
+                      {latestReportVitals.length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                          {latestReportVitals.slice(0, 6).map((v, i) => (
+                            <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                              <span className="font-bold text-slate-600">{v.name}</span>
+                              <span className="font-black text-slate-900">{v.value} <span className="text-xs text-slate-400 font-black">{v.unit}</span></span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <ResultPanel title="Concerns" items={latestMedicalReport.concerns || []} color="rose" icon={AlertCircle} />
+                        <ResultPanel title="Positives" items={latestMedicalReport.positives || []} color="emerald" icon={CheckCircle2} />
+                      </div>
+
+                      {medicalHistory.length > 1 && (
+                        <div className="mt-8">
+                          <h5 className="text-sm uppercase tracking-widest font-black text-slate-400 mb-4">Other Recent Reports</h5>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {medicalHistory.slice(1, 3).map((rep, idx) => (
+                              <div key={idx} className="p-4 bg-white rounded-2xl border border-slate-100">
+                                <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Report {idx + 2}</p>
+                                <p className="text-sm font-bold text-slate-700">{rep.summary || "Summary unavailable."}</p>
+                                {rep.concerns && rep.concerns.length > 0 && (
+                                  <p className="text-xs font-bold text-rose-500 mt-2">Top concern: {rep.concerns[0]}</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* New: Clinical Findings from Reports */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -779,7 +1036,7 @@ function App() {
                     </div>
                     <div className="space-y-4">
                       {history.length > 0 ? history.slice(0, 4).map((item, idx) => (
-                        <div key={idx} onClick={() => { setUploadedResult(item); }} className="flex items-center justify-between p-5 bg-white border border-slate-50 rounded-3xl hover:border-blue-200 transition-all cursor-pointer shadow-sm group">
+                        <div key={idx} onClick={() => { openResult(item); }} className="flex items-center justify-between p-5 bg-white border border-slate-50 rounded-3xl hover:border-blue-200 transition-all cursor-pointer shadow-sm group">
                           <div className="flex items-center gap-4">
                             <div className="bg-slate-50 p-3 rounded-2xl group-hover:bg-blue-50 transition-colors">
                               {item.type.includes('apple') ? <Activity size={22} className="text-blue-500" /> : <ClipboardList size={22} className="text-indigo-500" />}
@@ -846,6 +1103,28 @@ function App() {
                     </div>
                   </div>
 
+                  <div
+                    onDrop={handleDrop}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    className={`mb-12 rounded-[3rem] border-2 border-dashed p-10 text-center transition-all ${isDragActive ? 'border-blue-500 bg-blue-50/40' : 'border-slate-100 bg-slate-50/40'}`}
+                  >
+                    <div className="mx-auto mb-4 w-14 h-14 rounded-2xl bg-white shadow-sm flex items-center justify-center text-blue-600">
+                      <Upload size={26} />
+                    </div>
+                    <h4 className="text-2xl font-black text-slate-900 mb-2">Bulk Upload Medical Files</h4>
+                    <p className="text-slate-400 font-bold text-sm mb-6">
+                      Drag & drop multiple files or select them together. Supported: PDF, TXT, images, XML, CSV, Excel.
+                    </p>
+                    <button
+                      onClick={() => fileInputRef.current.click()}
+                      className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-slate-900 text-white font-black text-sm hover:bg-blue-600 transition-all"
+                    >
+                      <Plus size={18} />
+                      Select Files
+                    </button>
+                  </div>
+
                   <div className="space-y-16">
                     {Object.entries(groupHistoryByDate(history)).map(([date, items]) => (
                       <div key={date}>
@@ -857,7 +1136,7 @@ function App() {
                           {items.map((item, idx) => (
                             <div
                               key={item.id}
-                              onClick={() => setUploadedResult(item)}
+                              onClick={() => openResult(item)}
                               className={`group relative bg-white p-8 rounded-[2.5rem] border-2 transition-all cursor-pointer shadow-sm hover:shadow-xl hover:-translate-y-1 ${selectedIds.includes(item.id) ? 'border-blue-600 bg-blue-50/20' : 'border-slate-50 hover:border-blue-200'}`}
                             >
                               <div
@@ -940,12 +1219,15 @@ function App() {
                           </div>
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {deepAnalysis.highlights.map((h, i) => (
-                              <div key={i} className={`bg-${h.color}-50 p-8 rounded-[2.5rem] border border-${h.color}-100`}>
-                                <h5 className={`font-black text-${h.color}-800 mb-2`}>{h.title}</h5>
-                                <p className={`text-${h.color}-700/80 font-bold text-sm`}>{h.desc}</p>
-                              </div>
-                            ))}
+                            {deepAnalysis.highlights.map((h, i) => {
+                              const styles = highlightStyles[h.color] || highlightStyles.indigo;
+                              return (
+                                <div key={i} className={`${styles.bg} p-8 rounded-[2.5rem] border ${styles.border}`}>
+                                  <h5 className={`font-black ${styles.title} mb-2`}>{h.title}</h5>
+                                  <p className={`${styles.desc} font-bold text-sm`}>{h.desc}</p>
+                                </div>
+                              );
+                            })}
                           </div>
 
                           <div className="space-y-8">
@@ -971,15 +1253,18 @@ function App() {
                   <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-10 rounded-[4rem] text-white shadow-2xl">
                     <h4 className="text-xl font-black mb-8 border-b border-white/10 pb-4">Quick Observations</h4>
                     <div className="space-y-6">
-                      {aiInsights.insights.map((insight, idx) => (
-                        <div key={idx} className="flex gap-4 p-4 rounded-3xl bg-white/5 border border-white/5">
-                          <div className={`text-${insight.color}-400 mt-1`}><insight.icon size={20} /></div>
-                          <div>
-                            <p className="font-black text-sm">{insight.title}</p>
-                            <p className="text-xs text-slate-400 font-bold">{insight.desc}</p>
+                      {aiInsights.insights.map((insight, idx) => {
+                        const colorClass = insightColorClass[insight.color] || 'text-slate-200';
+                        return (
+                          <div key={idx} className="flex gap-4 p-4 rounded-3xl bg-white/5 border border-white/5">
+                            <div className={`${colorClass} mt-1`}><insight.icon size={20} /></div>
+                            <div>
+                              <p className="font-black text-sm">{insight.title}</p>
+                              <p className="text-xs text-slate-400 font-bold">{insight.desc}</p>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                       {aiInsights.insights.length === 0 && <p className="text-slate-500 font-bold text-sm italic">All basic vitals in range.</p>}
                     </div>
                   </div>
@@ -1011,10 +1296,26 @@ function App() {
                         <p className="text-slate-400 font-bold mt-1 uppercase tracking-widest text-[10px]">Artificial Intelligence Engine v1.5</p>
                       </div>
                     </div>
-                    <button onClick={() => setUploadedResult(null)} className="bg-white border border-slate-100 p-4 rounded-full hover:bg-rose-50 hover:text-rose-500 transition-all shadow-sm"><X size={24} /></button>
+                    <button onClick={closeResults} className="bg-white border border-slate-100 p-4 rounded-full hover:bg-rose-50 hover:text-rose-500 transition-all shadow-sm"><X size={24} /></button>
                   </div>
 
                   <div className="p-12 max-h-[75vh] overflow-y-auto">
+                    {uploadedResults.length > 1 && (
+                      <div className="mb-10 flex gap-3 overflow-x-auto pb-2">
+                        {uploadedResults.map((res, idx) => {
+                          const isActive = uploadedResult && (uploadedResult.id === res.id);
+                          return (
+                            <button
+                              key={`${res.id}-${idx}`}
+                              onClick={() => setUploadedResult(res)}
+                              className={`shrink-0 px-4 py-2 rounded-2xl text-xs font-black uppercase tracking-widest border transition-all ${isActive ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-400'}`}
+                            >
+                              {res.type.replace('_', ' ')}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     {uploadedResult.type === 'medical_report' && (
                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
                         <div className="lg:col-span-2 space-y-10">
@@ -1082,7 +1383,7 @@ function App() {
                         </div>
                         <h3 className="text-4xl font-black text-slate-900 mb-4 tracking-tighter">Data Synchronized!</h3>
                         <p className="text-slate-400 font-medium text-lg mb-10">Your health metrics have been analyzed and integrated into your dashboard.</p>
-                        <button onClick={() => setUploadedResult(null)} className="px-12 py-5 bg-slate-900 text-white rounded-[2rem] font-black text-xl hover:scale-105 transition-all shadow-2xl">Confirm & View</button>
+                        <button onClick={closeResults} className="px-12 py-5 bg-slate-900 text-white rounded-[2rem] font-black text-xl hover:scale-105 transition-all shadow-2xl">Confirm & View</button>
                       </div>
                     )}
                   </div>
@@ -1146,7 +1447,8 @@ function VitalsCard({ icon: Icon, label, value, unit, color, context = "--" }) {
     green: 'bg-green-50 text-green-600',
     teal: 'bg-teal-50 text-teal-600',
     violet: 'bg-violet-50 text-violet-600',
-    pink: 'bg-pink-50 text-pink-600'
+    pink: 'bg-pink-50 text-pink-600',
+    amber: 'bg-amber-50 text-amber-600'
   };
 
   return (
@@ -1180,7 +1482,7 @@ function InsightItem({ icon: Icon, title, desc }) {
   );
 }
 
-function ResultPanel({ title, items, color, icon: Icon }) {
+function ResultPanel({ title, items = [], color, icon: Icon }) {
   const c = color === 'rose' ? 'bg-rose-50 border-rose-100 text-rose-900' : 'bg-emerald-50 border-emerald-100 text-emerald-900';
   const dot = color === 'rose' ? 'bg-rose-400' : 'bg-emerald-400';
 
@@ -1190,14 +1492,18 @@ function ResultPanel({ title, items, color, icon: Icon }) {
         <Icon className={color === 'rose' ? 'text-rose-600' : 'text-emerald-600'} size={24} />
         {title}
       </h4>
-      <ul className="space-y-4">
-        {items.map((item, i) => (
-          <li key={i} className="flex gap-4 text-sm font-bold opacity-80 leading-relaxed px-2">
-            <span className={`w-1.5 h-1.5 rounded-full mt-2 shrink-0 ${dot}`}></span>
-            {item}
-          </li>
-        ))}
-      </ul>
+      {items.length > 0 ? (
+        <ul className="space-y-4">
+          {items.map((item, i) => (
+            <li key={i} className="flex gap-4 text-sm font-bold opacity-80 leading-relaxed px-2">
+              <span className={`w-1.5 h-1.5 rounded-full mt-2 shrink-0 ${dot}`}></span>
+              {item}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm font-bold text-slate-400 px-2">No items available.</p>
+      )}
     </div>
   );
 }

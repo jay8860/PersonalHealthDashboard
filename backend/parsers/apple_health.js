@@ -20,6 +20,8 @@ async function parseAppleHealth(filePath) {
         'HKQuantityTypeIdentifierHeartRate': 'heartRate',
         'HKQuantityTypeIdentifierRestingHeartRate': 'restingHeartRate',
         'HKQuantityTypeIdentifierHeartRateVariabilitySDNN': 'heartRateVariabilitySDNN',
+        'HKQuantityTypeIdentifierWalkingHeartRateAverage': 'walkingHeartRateAverage',
+        'HKQuantityTypeIdentifierHeartRateRecoveryOneMinute': 'heartRateRecoveryOneMinute',
         'HKQuantityTypeIdentifierRespiratoryRate': 'respiratoryRate',
         'HKQuantityTypeIdentifierVO2Max': 'vo2Max',
         'HKQuantityTypeIdentifierOxygenSaturation': 'oxygenSaturation',
@@ -34,6 +36,7 @@ async function parseAppleHealth(filePath) {
         'HKQuantityTypeIdentifierAppleStandTime': 'standTime',
 
         'HKQuantityTypeIdentifierBodyMass': 'bodyMass',
+        'HKQuantityTypeIdentifierBodyFatPercentage': 'bodyFatPercentage',
         'HKQuantityTypeIdentifierHeight': 'height',
         'HKQuantityTypeIdentifierBodyMassIndex': 'bodyMassIndex',
         'HKQuantityTypeIdentifierLeanBodyMass': 'leanBodyMass',
@@ -41,6 +44,7 @@ async function parseAppleHealth(filePath) {
 
         'HKQuantityTypeIdentifierBloodPressureSystolic': 'bloodPressureSystolic',
         'HKQuantityTypeIdentifierBloodPressureDiastolic': 'bloodPressureDiastolic',
+        'HKQuantityTypeIdentifierBloodGlucose': 'bloodGlucose',
 
         'HKQuantityTypeIdentifierWalkingSpeed': 'walkingSpeed',
         'HKQuantityTypeIdentifierWalkingStepLength': 'walkingStepLength',
@@ -48,7 +52,10 @@ async function parseAppleHealth(filePath) {
         'HKQuantityTypeIdentifierWalkingDoubleSupportPercentage': 'walkingDoubleSupportPercentage',
 
         'HKQuantityTypeIdentifierEnvironmentalAudioExposure': 'environmentalAudioExposure',
-        'HKQuantityTypeIdentifierHeadphoneAudioExposure': 'headphoneAudioExposure'
+        'HKQuantityTypeIdentifierHeadphoneAudioExposure': 'headphoneAudioExposure',
+
+        'HKQuantityTypeIdentifierDietaryEnergyConsumed': 'dietaryEnergyConsumed',
+        'HKQuantityTypeIdentifierDietaryWater': 'dietaryWater'
     };
 
     // Regex
@@ -192,7 +199,7 @@ async function parseAppleHealth(filePath) {
 
                         processedDay.sleep = totalMinutes;
                     } else {
-                        processedDay.sleep = 0;
+                        processedDay.sleep = null;
                     }
 
                     return processedDay;

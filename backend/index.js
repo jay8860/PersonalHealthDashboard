@@ -18,6 +18,20 @@ const port = process.env.PORT || 3001;
 
 console.log("App using API Key starting with:", process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.substring(0, 5) : "UNDEFINED");
 
+const sniffFileForCDA = (filePath) => {
+    try {
+        const fd = fs.openSync(filePath, 'r');
+        const buffer = Buffer.alloc(8192);
+        const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+        fs.closeSync(fd);
+        const head = buffer.toString('utf-8', 0, bytesRead);
+        return head.includes('ClinicalDocument');
+    } catch (err) {
+        console.warn('CDA sniff failed, defaulting to Apple Health parser:', err.message);
+        return false;
+    }
+};
+
 // Database setup
 const db = new sqlite3.Database('./health.db', (err) => {
     if (err) console.error('Error opening database', err);
@@ -54,7 +68,9 @@ const storage = multer.diskStorage({
         cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
-        cb(null, Date.now() + '-' + file.originalname);
+        const baseName = path.basename(file.originalname || 'upload');
+        const safeName = baseName.replace(/[^a-zA-Z0-9._-]/g, '_');
+        cb(null, `${Date.now()}-${safeName}`);
     }
 });
 
@@ -88,6 +104,7 @@ app.post('/api/upload', upload.array('files'), async (req, res) => {
         const fileName = file.originalname.toLowerCase();
         const filePath = file.path;
         const isAppleHealth = fileName.endsWith('.xml') || fileName.includes('apple_health');
+        const isImage = (file.mimetype || '').startsWith('image/') || ['.jpg', '.jpeg', '.png', '.heic', '.heif', '.webp', '.gif'].some(ext => fileName.endsWith(ext));
 
         try {
             let result;
@@ -95,8 +112,7 @@ app.post('/api/upload', upload.array('files'), async (req, res) => {
 
             if (isAppleHealth) {
                 // Check if it's a CDA file or standard export
-                const content = fs.readFileSync(filePath, 'utf-8');
-                if (content.includes('ClinicalDocument')) {
+                if (sniffFileForCDA(filePath)) {
                     type = 'cda_document';
                     result = await parseCDA(filePath);
                 } else {
@@ -115,7 +131,13 @@ app.post('/api/upload', upload.array('files'), async (req, res) => {
             } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
                 type = 'excel_data';
                 result = await parseExcelHealth(filePath);
-            } else if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf' || fileName.endsWith('.pdf') || fileName.endsWith('.txt')) {
+            } else if (
+                isImage ||
+                file.mimetype === 'application/pdf' ||
+                file.mimetype === 'text/plain' ||
+                fileName.endsWith('.pdf') ||
+                fileName.endsWith('.txt')
+            ) {
                 type = 'medical_report';
                 result = await analyzeReport(filePath, file.mimetype);
             } else {
@@ -155,6 +177,18 @@ app.get('/api/data', (req, res) => {
             data: JSON.parse(row.data)
         }));
         res.json(parsedRows);
+    });
+});
+
+// Single delete record
+app.delete('/api/data/:id', (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    db.run("DELETE FROM health_data WHERE id = ?", [id], function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Record not found' });
+        res.json({ message: 'Deletion successful', deletedCount: this.changes });
     });
 });
 
