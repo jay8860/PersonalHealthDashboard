@@ -52,10 +52,20 @@ const createTablesSqlite = async () => {
   await run(
     `CREATE TABLE IF NOT EXISTS medical_timeline (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      event_date DATE NOT NULL,
+      event_date DATE,
+      date_text TEXT,
       category TEXT,
       title TEXT NOT NULL,
       details TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`
+  );
+  await run(
+    `CREATE TABLE IF NOT EXISTS body_measurements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_date DATE,
+      date_text TEXT,
+      measurement_text TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`
   );
@@ -80,10 +90,20 @@ const createTablesPostgres = async () => {
   await run(
     `CREATE TABLE IF NOT EXISTS medical_timeline (
       id SERIAL PRIMARY KEY,
-      event_date DATE NOT NULL,
+      event_date DATE,
+      date_text TEXT,
       category TEXT,
       title TEXT NOT NULL,
       details TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`
+  );
+  await run(
+    `CREATE TABLE IF NOT EXISTS body_measurements (
+      id SERIAL PRIMARY KEY,
+      event_date DATE,
+      date_text TEXT,
+      measurement_text TEXT NOT NULL,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )`
   );
@@ -93,9 +113,42 @@ async function initDb() {
   if (usePostgres) {
     await connectPostgres();
     await createTablesPostgres();
+    try { await run(`ALTER TABLE medical_timeline ALTER COLUMN event_date DROP NOT NULL`); } catch (_) {}
+    try { await run(`ALTER TABLE medical_timeline ADD COLUMN IF NOT EXISTS date_text TEXT`); } catch (_) {}
+    try { await run(`ALTER TABLE body_measurements ADD COLUMN IF NOT EXISTS date_text TEXT`); } catch (_) {}
   } else {
     await initSqlite();
     await createTablesSqlite();
+    // SQLite migration for medical_timeline (make event_date optional + add date_text)
+    try {
+      const columns = await all(`PRAGMA table_info(medical_timeline)`, []);
+      const hasDateText = columns.some(col => col.name === 'date_text');
+      const eventDateNotNull = columns.some(col => col.name === 'event_date' && col.notnull === 1);
+      if (!hasDateText || eventDateNotNull) {
+        await run(`BEGIN TRANSACTION`);
+        await run(`ALTER TABLE medical_timeline RENAME TO medical_timeline_old`);
+        await run(
+          `CREATE TABLE medical_timeline (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_date DATE,
+            date_text TEXT,
+            category TEXT,
+            title TEXT NOT NULL,
+            details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`
+        );
+        await run(
+          `INSERT INTO medical_timeline (id, event_date, category, title, details, created_at)
+           SELECT id, event_date, category, title, details, created_at FROM medical_timeline_old`
+        );
+        await run(`DROP TABLE medical_timeline_old`);
+        await run(`COMMIT`);
+      }
+    } catch (err) {
+      try { await run(`ROLLBACK`); } catch (_) {}
+      console.warn('SQLite timeline migration skipped:', err.message);
+    }
   }
 }
 

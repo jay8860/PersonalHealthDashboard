@@ -51,7 +51,8 @@ const escapeCsvValue = (value) => {
 const tableColumns = {
     health_data: ['id', 'type', 'data', 'created_at'],
     daily_notes: ['id', 'note_text', 'created_at'],
-    medical_timeline: ['id', 'event_date', 'category', 'title', 'details', 'created_at']
+    medical_timeline: ['id', 'event_date', 'date_text', 'category', 'title', 'details', 'created_at'],
+    body_measurements: ['id', 'event_date', 'date_text', 'measurement_text', 'created_at']
 };
 
 // Middleware
@@ -272,25 +273,64 @@ app.get('/api/timeline', async (req, res) => {
 });
 
 app.post('/api/timeline', async (req, res) => {
-    const eventDate = req.body.eventDate;
+    const eventDate = req.body.eventDate || null;
+    const dateText = (req.body.dateText || '').trim() || null;
     const title = (req.body.title || '').trim();
     const details = (req.body.details || '').trim();
     const category = (req.body.category || '').trim();
-    if (!eventDate || !title) return res.status(400).json({ error: 'eventDate and title required' });
+    if (!title) return res.status(400).json({ error: 'title required' });
 
     try {
         if (isPostgres()) {
             const saved = await run(
-                "INSERT INTO medical_timeline (event_date, category, title, details) VALUES ($1, $2, $3, $4) RETURNING *",
-                [eventDate, category || null, title, details || null]
+                "INSERT INTO medical_timeline (event_date, date_text, category, title, details) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+                [eventDate, dateText, category || null, title, details || null]
             );
             return res.json(saved.rows[0]);
         }
         const saved = await run(
-            "INSERT INTO medical_timeline (event_date, category, title, details) VALUES (?, ?, ?, ?)",
-            [eventDate, category || null, title, details || null]
+            "INSERT INTO medical_timeline (event_date, date_text, category, title, details) VALUES (?, ?, ?, ?, ?)",
+            [eventDate, dateText, category || null, title, details || null]
         );
         const rows = await all("SELECT * FROM medical_timeline WHERE id = ?", [saved.lastID]);
+        res.json(rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Body measurements
+app.get('/api/measurements', async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+    try {
+        const rows = isPostgres()
+            ? await all("SELECT * FROM body_measurements ORDER BY COALESCE(event_date::timestamptz, created_at) DESC LIMIT $1", [limit])
+            : await all("SELECT * FROM body_measurements ORDER BY COALESCE(event_date, created_at) DESC LIMIT ?", [limit]);
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/measurements', async (req, res) => {
+    const eventDate = req.body.eventDate || null;
+    const dateText = (req.body.dateText || '').trim() || null;
+    const measurementText = (req.body.measurementText || '').trim();
+    if (!measurementText) return res.status(400).json({ error: 'measurementText required' });
+
+    try {
+        if (isPostgres()) {
+            const saved = await run(
+                "INSERT INTO body_measurements (event_date, date_text, measurement_text) VALUES ($1, $2, $3) RETURNING *",
+                [eventDate, dateText, measurementText]
+            );
+            return res.json(saved.rows[0]);
+        }
+        const saved = await run(
+            "INSERT INTO body_measurements (event_date, date_text, measurement_text) VALUES (?, ?, ?)",
+            [eventDate, dateText, measurementText]
+        );
+        const rows = await all("SELECT * FROM body_measurements WHERE id = ?", [saved.lastID]);
         res.json(rows[0]);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -303,6 +343,7 @@ app.get('/api/export/json', async (req, res) => {
         const health = await all("SELECT * FROM health_data ORDER BY created_at DESC", []);
         const notes = await all("SELECT * FROM daily_notes ORDER BY created_at DESC", []);
         const timeline = await all("SELECT * FROM medical_timeline ORDER BY event_date DESC, created_at DESC", []);
+        const measurements = await all("SELECT * FROM body_measurements ORDER BY COALESCE(event_date, created_at) DESC", []);
 
         const payload = {
             exportedAt: new Date().toISOString(),
@@ -310,7 +351,8 @@ app.get('/api/export/json', async (req, res) => {
             sqlitePath: isPostgres() ? null : getSqlitePath(),
             health_data: health,
             daily_notes: notes,
-            medical_timeline: timeline
+            medical_timeline: timeline,
+            body_measurements: measurements
         };
 
         const fileName = `health-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -325,11 +367,13 @@ app.get('/api/export/json', async (req, res) => {
 // Export backup (CSV)
 app.get('/api/export/csv', async (req, res) => {
     const table = req.query.table || 'health_data';
-    if (!tableColumns[table]) return res.status(400).json({ error: 'Invalid table. Use health_data, daily_notes, or medical_timeline.' });
+    if (!tableColumns[table]) return res.status(400).json({ error: 'Invalid table. Use health_data, daily_notes, medical_timeline, or body_measurements.' });
 
     try {
         const rows = table === 'medical_timeline'
             ? await all(`SELECT * FROM ${table} ORDER BY event_date DESC, created_at DESC`, [])
+            : table === 'body_measurements'
+                ? await all(`SELECT * FROM ${table} ORDER BY COALESCE(event_date, created_at) DESC`, [])
             : await all(`SELECT * FROM ${table} ORDER BY created_at DESC`, []);
         const columns = tableColumns[table];
         const header = columns.join(',');
@@ -346,7 +390,7 @@ app.get('/api/export/csv', async (req, res) => {
 
 // Comprehensive AI Coach Synthesis
 app.post('/api/ai/coach', async (req, res) => {
-    const { metrics, medicalHistory, ecgHistory, cdaHistory, dailyNote, timeline } = req.body;
+    const { metrics, medicalHistory, ecgHistory, cdaHistory, dailyNote, timeline, bodyMeasurements } = req.body;
 
     try {
         const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -374,6 +418,9 @@ app.post('/api/ai/coach', async (req, res) => {
 
             6. MEDICAL TIMELINE (Most recent events):
             ${JSON.stringify((timeline || []).slice(0, 15))}
+
+            7. BODY MEASUREMENTS (Recent entries):
+            ${JSON.stringify((bodyMeasurements || []).slice(0, 10))}
             
             OBJECTIVE:
             1. Synthesize a comprehensive, "True Picture" health status. 
@@ -409,7 +456,7 @@ app.post('/api/ai/coach', async (req, res) => {
 
 // AI Coach Q&A
 app.post('/api/ai/ask', async (req, res) => {
-    const { question, metrics, medicalHistory, ecgHistory, cdaHistory, dailyNotes, timeline } = req.body;
+    const { question, metrics, medicalHistory, ecgHistory, cdaHistory, dailyNotes, timeline, bodyMeasurements } = req.body;
     if (!question || !String(question).trim()) {
         return res.status(400).json({ error: 'Question required' });
     }
@@ -445,6 +492,9 @@ app.post('/api/ai/ask', async (req, res) => {
 
             6. MEDICAL TIMELINE (recent):
             ${JSON.stringify((timeline || []).slice(0, 10))}
+
+            7. BODY MEASUREMENTS (recent):
+            ${JSON.stringify((bodyMeasurements || []).slice(0, 10))}
         `;
 
         const result = await model.generateContent(prompt);

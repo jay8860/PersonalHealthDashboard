@@ -53,7 +53,7 @@ import {
   Cell
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadFiles, getHealthData, deleteRecord, getDeepAnalysis, deleteBulk, getDailyNotes, createDailyNote, getTimeline, createTimelineEntry, exportJsonBackupUrl, exportCsvBackupUrl, login, askCoach } from './api';
+import { uploadFiles, getHealthData, deleteRecord, getDeepAnalysis, deleteBulk, getDailyNotes, createDailyNote, getTimeline, createTimelineEntry, exportJsonBackupUrl, exportCsvBackupUrl, login, askCoach, getMeasurements, createMeasurementEntry } from './api';
 
 // --- Configuration for Health Metrics ---
 const metricConfig = {
@@ -133,17 +133,25 @@ function App() {
   const [dailyNoteInput, setDailyNoteInput] = useState('');
   const [dailyNotes, setDailyNotes] = useState([]);
   const [timelineEntries, setTimelineEntries] = useState([]);
+  const [measurementEntries, setMeasurementEntries] = useState([]);
+  const [measurementForm, setMeasurementForm] = useState({
+    eventDate: '',
+    dateText: '',
+    measurementText: ''
+  });
   const [coachQuestion, setCoachQuestion] = useState('');
   const [coachAnswer, setCoachAnswer] = useState('');
   const [isAskingCoach, setIsAskingCoach] = useState(false);
   const [timelineForm, setTimelineForm] = useState({
     eventDate: '',
+    dateText: '',
     category: 'Illness',
     title: '',
     details: ''
   });
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [isSavingTimeline, setIsSavingTimeline] = useState(false);
+  const [isSavingMeasurement, setIsSavingMeasurement] = useState(false);
   const fileInputRef = useRef(null);
 
   const groupHistoryByDate = (history) => {
@@ -161,6 +169,7 @@ function App() {
     fetchHistory();
     fetchNotes();
     fetchTimeline();
+    fetchMeasurements();
     // Auto-refresh every 30s to see new data
     const interval = setInterval(fetchHistory, 30000);
     return () => clearInterval(interval);
@@ -197,6 +206,15 @@ function App() {
       setTimelineEntries(data);
     } catch (err) {
       console.error("Failed to fetch timeline", err);
+    }
+  };
+
+  const fetchMeasurements = async () => {
+    try {
+      const data = await getMeasurements(50);
+      setMeasurementEntries(data);
+    } catch (err) {
+      console.error("Failed to fetch measurements", err);
     }
   };
 
@@ -376,24 +394,50 @@ function App() {
   };
 
   const handleSaveTimeline = async () => {
-    if (!timelineForm.eventDate || !timelineForm.title.trim()) {
-      alert("Please add a date and a short title.");
+    if (!timelineForm.title.trim()) {
+      alert("Please add a short title.");
       return;
     }
     setIsSavingTimeline(true);
     try {
       await createTimelineEntry({
-        eventDate: timelineForm.eventDate,
+        eventDate: timelineForm.eventDate || null,
+        dateText: timelineForm.dateText?.trim(),
         category: timelineForm.category,
         title: timelineForm.title.trim(),
         details: timelineForm.details.trim()
       });
-      setTimelineForm({ eventDate: '', category: 'Illness', title: '', details: '' });
+      setTimelineForm({ eventDate: '', dateText: '', category: 'Illness', title: '', details: '' });
       fetchTimeline();
     } catch (err) {
       alert("Failed to save timeline entry: " + (err.response?.data?.error || err.message));
     } finally {
       setIsSavingTimeline(false);
+    }
+  };
+
+  const handleMeasurementChange = (field, value) => {
+    setMeasurementForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveMeasurement = async () => {
+    if (!measurementForm.measurementText.trim()) {
+      alert("Please add your measurements.");
+      return;
+    }
+    setIsSavingMeasurement(true);
+    try {
+      await createMeasurementEntry({
+        eventDate: measurementForm.eventDate || null,
+        dateText: measurementForm.dateText?.trim(),
+        measurementText: measurementForm.measurementText.trim()
+      });
+      setMeasurementForm({ eventDate: '', dateText: '', measurementText: '' });
+      fetchMeasurements();
+    } catch (err) {
+      alert("Failed to save measurements: " + (err.response?.data?.error || err.message));
+    } finally {
+      setIsSavingMeasurement(false);
     }
   };
 
@@ -411,13 +455,24 @@ function App() {
       id: `event-${entry.id}`,
       type: 'event',
       date: entry.event_date || entry.created_at,
+      dateText: entry.date_text,
       title: entry.title,
       category: entry.category || 'Other',
       details: entry.details
     }));
 
-    return [...events, ...notes].sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [dailyNotes, timelineEntries]);
+    const measurements = (measurementEntries || []).map(entry => ({
+      id: `measure-${entry.id}`,
+      type: 'measurement',
+      date: entry.event_date || entry.created_at,
+      dateText: entry.date_text,
+      title: 'Body Measurements',
+      category: 'Measurements',
+      details: entry.measurement_text
+    }));
+
+    return [...events, ...notes, ...measurements].sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [dailyNotes, timelineEntries, measurementEntries]);
 
   const handleAskCoach = async () => {
     const question = coachQuestion.trim();
@@ -432,7 +487,8 @@ function App() {
         ecgHistory,
         cdaHistory,
         dailyNotes: dailyNotes.slice(0, 10),
-        timeline: timelineEntries.slice(0, 20)
+        timeline: timelineEntries.slice(0, 20),
+        bodyMeasurements: measurementEntries.slice(0, 10)
       });
       setCoachAnswer(response.answer || 'No response received.');
     } catch (err) {
@@ -475,7 +531,7 @@ function App() {
         setIsAnalyzing(true);
         try {
           const latestNote = dailyNotes[0] || null;
-          const result = await getDeepAnalysis(healthMetrics, medicalHistory, ecgHistory, cdaHistory, latestNote, timelineEntries);
+          const result = await getDeepAnalysis(healthMetrics, medicalHistory, ecgHistory, cdaHistory, latestNote, timelineEntries, measurementEntries);
           setDeepAnalysis(result);
         } catch (e) {
           console.error("Deep analysis failed", e);
@@ -489,7 +545,7 @@ function App() {
       console.log("Deep Analysis Trigger: Conditions met. history:", history.length, "metrics:", Object.keys(healthMetrics).length);
       fetchDeepAnalysis();
     }
-  }, [activeTab, healthMetrics, medicalHistory, history, deepAnalysis, dailyNotes, timelineEntries]);
+  }, [activeTab, healthMetrics, medicalHistory, history, deepAnalysis, dailyNotes, timelineEntries, measurementEntries]);
 
   // --- AI Insight Generator ---
   const generateInsights = (metrics, medHistory = []) => {
@@ -1306,10 +1362,12 @@ function App() {
                         <div key={item.id} className="p-4 bg-white border border-slate-50 rounded-3xl shadow-sm">
                           <div className="flex items-center justify-between mb-2">
                             <p className="text-xs font-black text-slate-400">
-                              {new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                              {item.date
+                                ? new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                                : (item.dateText || 'Date unknown')}
                             </p>
-                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${item.type === 'note' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'}`}>
-                              {item.type === 'note' ? 'Note' : item.category}
+                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${item.type === 'note' ? 'bg-blue-50 text-blue-600' : item.type === 'measurement' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                              {item.type === 'note' ? 'Note' : item.type === 'measurement' ? 'Measurements' : item.category}
                             </span>
                           </div>
                           <p className="font-black text-sm text-slate-800 mb-1">{item.title}</p>
@@ -1413,6 +1471,12 @@ function App() {
                         >
                           CSV: Timeline
                         </button>
+                        <button
+                          onClick={() => handleExport('csv', 'body_measurements')}
+                          className="px-5 py-3 rounded-2xl bg-slate-100 text-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all"
+                        >
+                          CSV: Measurements
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1472,7 +1536,7 @@ function App() {
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Date</label>
+                          <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Date (optional)</label>
                           <input
                             type="date"
                             value={timelineForm.eventDate}
@@ -1507,6 +1571,16 @@ function App() {
                         />
                       </div>
                       <div className="mt-4">
+                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Approx Date / Year (optional)</label>
+                        <input
+                          type="text"
+                          value={timelineForm.dateText}
+                          onChange={(e) => handleTimelineChange('dateText', e.target.value)}
+                          placeholder="e.g., 2018, Winter 2020, Around March 2022"
+                          className="w-full mt-2 rounded-2xl border border-slate-100 p-3 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div className="mt-4">
                         <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Details</label>
                         <textarea
                           value={timelineForm.details}
@@ -1532,7 +1606,9 @@ function App() {
                             <div key={entry.id} className="p-4 rounded-2xl bg-white border border-slate-100">
                               <div className="flex items-center justify-between mb-2">
                                 <p className="text-xs font-black text-slate-400">
-                                  {new Date(entry.event_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                                  {entry.event_date
+                                    ? new Date(entry.event_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                                    : (entry.date_text || 'Date unknown')}
                                 </p>
                                 <span className="text-[10px] font-black uppercase tracking-widest text-indigo-500 bg-indigo-50 px-2 py-1 rounded-full">
                                   {entry.category || 'Other'}
@@ -1545,6 +1621,73 @@ function App() {
                         </div>
                       )}
                     </div>
+                  </div>
+
+                  <div className="mb-12 bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm">
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="bg-emerald-50 p-3 rounded-2xl text-emerald-600">
+                        <Ruler size={22} />
+                      </div>
+                      <div>
+                        <h4 className="text-2xl font-black text-slate-900">Body Measurements</h4>
+                        <p className="text-slate-400 text-sm font-bold">Add long‑form notes or bullet points (date optional).</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Date (optional)</label>
+                        <input
+                          type="date"
+                          value={measurementForm.eventDate}
+                          onChange={(e) => handleMeasurementChange('eventDate', e.target.value)}
+                          className="w-full mt-2 rounded-2xl border border-slate-100 p-3 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Approx Date / Year (optional)</label>
+                        <input
+                          type="text"
+                          value={measurementForm.dateText}
+                          onChange={(e) => handleMeasurementChange('dateText', e.target.value)}
+                          placeholder="e.g., 2021, Summer 2020"
+                          className="w-full mt-2 rounded-2xl border border-slate-100 p-3 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-4">
+                      <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Measurements (free‑form)</label>
+                      <textarea
+                        value={measurementForm.measurementText}
+                        onChange={(e) => handleMeasurementChange('measurementText', e.target.value)}
+                        placeholder="- Chest: 96 cm\n- Waist: 78 cm\n- Hips: 92 cm\n- Body fat: 18%\nOther notes..."
+                        className="w-full mt-2 h-32 rounded-2xl border border-slate-100 p-3 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                    <div className="flex justify-end mt-4">
+                      <button
+                        onClick={handleSaveMeasurement}
+                        disabled={isSavingMeasurement}
+                        className="px-6 py-3 rounded-2xl bg-slate-900 text-white font-black text-sm hover:bg-emerald-600 transition-all disabled:opacity-50"
+                      >
+                        {isSavingMeasurement ? 'Saving...' : 'Save Measurements'}
+                      </button>
+                    </div>
+
+                    {measurementEntries.length > 0 && (
+                      <div className="mt-6 space-y-3">
+                        <p className="text-xs uppercase tracking-widest font-black text-slate-400">Recent Measurements</p>
+                        {measurementEntries.slice(0, 3).map((entry) => (
+                          <div key={entry.id} className="p-4 rounded-2xl bg-white border border-slate-100">
+                            <p className="text-xs font-black text-slate-400 mb-2">
+                              {entry.event_date
+                                ? new Date(entry.event_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                                : (entry.date_text || 'Date unknown')}
+                            </p>
+                            <p className="text-sm font-bold text-slate-700 whitespace-pre-line">{entry.measurement_text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-16">

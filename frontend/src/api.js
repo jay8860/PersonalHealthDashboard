@@ -37,8 +37,8 @@ export const deleteRecord = async (id) => {
     return response.data;
 };
 
-export const getDeepAnalysis = async (metrics, medicalHistory, ecgHistory, cdaHistory, dailyNote, timeline) => {
-    const response = await axios.post(`${API_BASE_URL}/ai/coach`, { metrics, medicalHistory, ecgHistory, cdaHistory, dailyNote, timeline });
+export const getDeepAnalysis = async (metrics, medicalHistory, ecgHistory, cdaHistory, dailyNote, timeline, bodyMeasurements) => {
+    const response = await axios.post(`${API_BASE_URL}/ai/coach`, { metrics, medicalHistory, ecgHistory, cdaHistory, dailyNote, timeline, bodyMeasurements });
     return response.data;
 };
 
@@ -71,7 +71,7 @@ export const exportJsonBackupUrl = () => `${API_BASE_URL}/export/json`;
 
 export const exportCsvBackupUrl = (table) => `${API_BASE_URL}/export/csv?table=${table}`;
 
-export const askCoach = async ({ question, metrics, medicalHistory, ecgHistory, cdaHistory, dailyNotes, timeline }) => {
+export const askCoach = async ({ question, metrics, medicalHistory, ecgHistory, cdaHistory, dailyNotes, timeline, bodyMeasurements }) => {
     const response = await axios.post(`${API_BASE_URL}/ai/ask`, {
         question,
         metrics,
@@ -79,7 +79,18 @@ export const askCoach = async ({ question, metrics, medicalHistory, ecgHistory, 
         ecgHistory,
         cdaHistory,
         dailyNotes,
-        timeline
+        timeline,
+        bodyMeasurements
     });
+    return response.data;
+};
+
+export const getMeasurements = async (limit = 50) => {
+    const response = await axios.get(`${API_BASE_URL}/measurements?limit=${limit}`);
+    return response.data;
+};
+
+export const createMeasurementEntry = async (payload) => {
+    const response = await axios.post(`${API_BASE_URL}/measurements`, payload);
     return response.data;
 };
