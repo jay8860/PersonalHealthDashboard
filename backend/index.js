@@ -407,6 +407,56 @@ app.post('/api/ai/coach', async (req, res) => {
     }
 });
 
+// AI Coach Q&A
+app.post('/api/ai/ask', async (req, res) => {
+    const { question, metrics, medicalHistory, ecgHistory, cdaHistory, dailyNotes, timeline } = req.body;
+    if (!question || !String(question).trim()) {
+        return res.status(400).json({ error: 'Question required' });
+    }
+
+    try {
+        const { GoogleGenerativeAI } = require("@google/generative-ai");
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+        const prompt = `
+            You are a personal health AI coach. Answer the user's question using their health data context.
+            Be concise, practical, and cautious. If data is missing, say so.
+            Do not diagnose. Provide clear next steps and when to seek medical care if needed.
+
+            USER QUESTION:
+            ${String(question).trim()}
+
+            CONTEXT:
+            1. DAILY METRICS (latest/averages):
+            ${JSON.stringify(metrics || {})}
+
+            2. MEDICAL REPORTS (recent):
+            ${JSON.stringify((medicalHistory || []).slice(0, 5))}
+
+            3. ECG HISTORY (recent):
+            ${JSON.stringify((ecgHistory || []).slice(0, 5))}
+
+            4. CDA CLINICAL DATA (recent):
+            ${JSON.stringify((cdaHistory || []).slice(0, 3))}
+
+            5. DAILY NOTES (recent):
+            ${JSON.stringify((dailyNotes || []).slice(0, 5))}
+
+            6. MEDICAL TIMELINE (recent):
+            ${JSON.stringify((timeline || []).slice(0, 10))}
+        `;
+
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+        res.json({ answer: text });
+    } catch (error) {
+        console.error("Coach Q&A error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Serve static files from the React frontend app
 const frontendPath = path.join(__dirname, '../frontend/dist');
 if (fs.existsSync(frontendPath)) {

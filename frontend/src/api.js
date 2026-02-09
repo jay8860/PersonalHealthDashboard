@@ -70,3 +70,16 @@ export const createTimelineEntry = async (payload) => {
 export const exportJsonBackupUrl = () => `${API_BASE_URL}/export/json`;
 
 export const exportCsvBackupUrl = (table) => `${API_BASE_URL}/export/csv?table=${table}`;
+
+export const askCoach = async ({ question, metrics, medicalHistory, ecgHistory, cdaHistory, dailyNotes, timeline }) => {
+    const response = await axios.post(`${API_BASE_URL}/ai/ask`, {
+        question,
+        metrics,
+        medicalHistory,
+        ecgHistory,
+        cdaHistory,
+        dailyNotes,
+        timeline
+    });
+    return response.data;
+};

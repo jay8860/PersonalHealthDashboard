@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Heart,
   Activity,
@@ -53,7 +53,7 @@ import {
   Cell
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadFiles, getHealthData, deleteRecord, getDeepAnalysis, deleteBulk, getDailyNotes, createDailyNote, getTimeline, createTimelineEntry, exportJsonBackupUrl, exportCsvBackupUrl, login } from './api';
+import { uploadFiles, getHealthData, deleteRecord, getDeepAnalysis, deleteBulk, getDailyNotes, createDailyNote, getTimeline, createTimelineEntry, exportJsonBackupUrl, exportCsvBackupUrl, login, askCoach } from './api';
 
 // --- Configuration for Health Metrics ---
 const metricConfig = {
@@ -133,6 +133,9 @@ function App() {
   const [dailyNoteInput, setDailyNoteInput] = useState('');
   const [dailyNotes, setDailyNotes] = useState([]);
   const [timelineEntries, setTimelineEntries] = useState([]);
+  const [coachQuestion, setCoachQuestion] = useState('');
+  const [coachAnswer, setCoachAnswer] = useState('');
+  const [isAskingCoach, setIsAskingCoach] = useState(false);
   const [timelineForm, setTimelineForm] = useState({
     eventDate: '',
     category: 'Illness',
@@ -391,6 +394,51 @@ function App() {
       alert("Failed to save timeline entry: " + (err.response?.data?.error || err.message));
     } finally {
       setIsSavingTimeline(false);
+    }
+  };
+
+  const timelineFeed = useMemo(() => {
+    const notes = (dailyNotes || []).map(note => ({
+      id: `note-${note.id}`,
+      type: 'note',
+      date: note.created_at,
+      title: 'Daily Note',
+      category: 'Note',
+      details: note.note_text
+    }));
+
+    const events = (timelineEntries || []).map(entry => ({
+      id: `event-${entry.id}`,
+      type: 'event',
+      date: entry.event_date || entry.created_at,
+      title: entry.title,
+      category: entry.category || 'Other',
+      details: entry.details
+    }));
+
+    return [...events, ...notes].sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [dailyNotes, timelineEntries]);
+
+  const handleAskCoach = async () => {
+    const question = coachQuestion.trim();
+    if (!question) return;
+    setIsAskingCoach(true);
+    setCoachAnswer('');
+    try {
+      const response = await askCoach({
+        question,
+        metrics: healthMetrics,
+        medicalHistory,
+        ecgHistory,
+        cdaHistory,
+        dailyNotes: dailyNotes.slice(0, 10),
+        timeline: timelineEntries.slice(0, 20)
+      });
+      setCoachAnswer(response.answer || 'No response received.');
+    } catch (err) {
+      setCoachAnswer(err.response?.data?.error || err.message || 'Failed to get response.');
+    } finally {
+      setIsAskingCoach(false);
     }
   };
 
@@ -1246,6 +1294,32 @@ function App() {
                       )}
                     </div>
                   </div >
+
+                  {/* Timeline & Notes */}
+                  <div className="glass-card p-8 rounded-[3.5rem]">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-xl font-black text-slate-900">Timeline & Notes</h3>
+                      <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Latest</span>
+                    </div>
+                    <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
+                      {timelineFeed.length > 0 ? timelineFeed.map(item => (
+                        <div key={item.id} className="p-4 bg-white border border-slate-50 rounded-3xl shadow-sm">
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs font-black text-slate-400">
+                              {new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </p>
+                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${item.type === 'note' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                              {item.type === 'note' ? 'Note' : item.category}
+                            </span>
+                          </div>
+                          <p className="font-black text-sm text-slate-800 mb-1">{item.title}</p>
+                          {item.details && <p className="text-xs font-bold text-slate-500">{item.details}</p>}
+                        </div>
+                      )) : (
+                        <div className="text-center text-slate-400 text-sm font-bold">No notes or timeline entries yet.</div>
+                      )}
+                    </div>
+                  </div>
                 </div >
               </motion.div >
             )
@@ -1548,6 +1622,35 @@ function App() {
                   className="grid grid-cols-1 lg:grid-cols-3 gap-8"
                 >
                   <div className="lg:col-span-2 space-y-8">
+                    <div className="bg-white p-10 rounded-[4rem] shadow-xl border border-blue-50">
+                      <div className="flex items-center gap-4 mb-6 text-blue-600">
+                        <Brain size={28} />
+                        <h3 className="text-2xl font-black text-slate-900 tracking-tight">Ask the AI Coach</h3>
+                      </div>
+                      <p className="text-slate-400 text-sm font-bold mb-4">
+                        Ask questions based on your history, reports, notes, and metrics.
+                      </p>
+                      <textarea
+                        value={coachQuestion}
+                        onChange={(e) => setCoachQuestion(e.target.value)}
+                        placeholder="Example: Should I worry about low HRV this month?"
+                        className="w-full h-28 rounded-3xl border border-slate-100 p-4 text-sm font-medium text-slate-700 bg-slate-50/60 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <div className="flex justify-end mt-4">
+                        <button
+                          onClick={handleAskCoach}
+                          disabled={isAskingCoach}
+                          className="px-6 py-3 rounded-2xl bg-slate-900 text-white font-black text-sm hover:bg-blue-600 transition-all disabled:opacity-50"
+                        >
+                          {isAskingCoach ? 'Thinking...' : 'Ask Coach'}
+                        </button>
+                      </div>
+                      {coachAnswer && (
+                        <div className="mt-6 bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                          <p className="text-sm font-bold text-slate-700 leading-relaxed whitespace-pre-line">{coachAnswer}</p>
+                        </div>
+                      )}
+                    </div>
                     <div className="bg-white p-12 rounded-[4rem] shadow-xl border border-blue-50">
                       <div className="flex items-center gap-6 mb-10 text-blue-600">
                         <Sparkles size={40} />
