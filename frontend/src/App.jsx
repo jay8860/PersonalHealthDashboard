@@ -52,7 +52,7 @@ import {
   Cell
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadFiles, getHealthData, deleteRecord, getDeepAnalysis, deleteBulk, getDailyNotes, createDailyNote, getTimeline, createTimelineEntry } from './api';
+import { uploadFiles, getHealthData, deleteRecord, getDeepAnalysis, deleteBulk, getDailyNotes, createDailyNote, getTimeline, createTimelineEntry, exportJsonBackupUrl, exportCsvBackupUrl } from './api';
 
 // --- Configuration for Health Metrics ---
 const metricConfig = {
@@ -309,6 +309,11 @@ function App() {
       setCopyLabel('Copy failed');
       setTimeout(() => setCopyLabel('Copy'), 2000);
     }
+  };
+
+  const handleExport = (type, table) => {
+    const url = type === 'json' ? exportJsonBackupUrl() : exportCsvBackupUrl(table);
+    window.open(url, '_blank');
   };
 
   const handleSaveNote = async () => {
@@ -1196,6 +1201,41 @@ function App() {
                       <Plus size={18} />
                       Select Files
                     </button>
+                  </div>
+
+                  <div className="mb-12 bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+                      <div>
+                        <h4 className="text-2xl font-black text-slate-900">Export Backup</h4>
+                        <p className="text-slate-400 text-sm font-bold">Download your data as JSON or CSV.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          onClick={() => handleExport('json')}
+                          className="px-5 py-3 rounded-2xl bg-slate-900 text-white font-black text-xs uppercase tracking-widest hover:bg-blue-600 transition-all"
+                        >
+                          Export JSON (Full)
+                        </button>
+                        <button
+                          onClick={() => handleExport('csv', 'health_data')}
+                          className="px-5 py-3 rounded-2xl bg-slate-100 text-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all"
+                        >
+                          CSV: Health Data
+                        </button>
+                        <button
+                          onClick={() => handleExport('csv', 'daily_notes')}
+                          className="px-5 py-3 rounded-2xl bg-slate-100 text-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all"
+                        >
+                          CSV: Daily Notes
+                        </button>
+                        <button
+                          onClick={() => handleExport('csv', 'medical_timeline')}
+                          className="px-5 py-3 rounded-2xl bg-slate-100 text-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-all"
+                        >
+                          CSV: Timeline
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">

@@ -1,7 +1,10 @@
 const sqlite3 = require('sqlite3').verbose();
+const fs = require('fs');
+const path = require('path');
 const { Pool } = require('pg');
 
 const usePostgres = Boolean(process.env.DATABASE_URL);
+const sqlitePath = process.env.SQLITE_PATH || process.env.DATABASE_PATH || './health.db';
 
 let sqliteDb = null;
 let pgPool = null;
@@ -15,8 +18,16 @@ const connectPostgres = async () => {
   await pgPool.query('SELECT 1');
 };
 
+const ensureSqliteDir = () => {
+  const dir = path.dirname(sqlitePath);
+  if (dir && dir !== '.' && !fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+};
+
 const initSqlite = () => new Promise((resolve, reject) => {
-  sqliteDb = new sqlite3.Database('./health.db', (err) => {
+  ensureSqliteDir();
+  sqliteDb = new sqlite3.Database(sqlitePath, (err) => {
     if (err) reject(err);
     else resolve();
   });
@@ -116,5 +127,6 @@ async function run(sql, params = []) {
 }
 
 const isPostgres = () => usePostgres;
+const getSqlitePath = () => sqlitePath;
 
-module.exports = { initDb, all, run, isPostgres };
+module.exports = { initDb, all, run, isPostgres, getSqlitePath };

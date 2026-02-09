@@ -5,7 +5,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 const path = require('path');
 const fs = require('fs');
-const { initDb, all, run, isPostgres } = require('./db');
+const { initDb, all, run, isPostgres, getSqlitePath } = require('./db');
 const { parseAppleHealth } = require('./parsers/apple_health');
 const { parseCSVHealth } = require('./parsers/csv_parser');
 const { parseExcelHealth } = require('./parsers/excel_parser');
@@ -37,6 +37,21 @@ const buildSqlPlaceholders = (count) => {
         return Array.from({ length: count }, (_, i) => `$${i + 1}`).join(',');
     }
     return Array.from({ length: count }, () => '?').join(',');
+};
+
+const escapeCsvValue = (value) => {
+    if (value === null || value === undefined) return '';
+    const str = String(value);
+    if (/[",\n]/.test(str)) {
+        return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+};
+
+const tableColumns = {
+    health_data: ['id', 'type', 'data', 'created_at'],
+    daily_notes: ['id', 'note_text', 'created_at'],
+    medical_timeline: ['id', 'event_date', 'category', 'title', 'details', 'created_at']
 };
 
 // Middleware
@@ -277,6 +292,53 @@ app.post('/api/timeline', async (req, res) => {
         );
         const rows = await all("SELECT * FROM medical_timeline WHERE id = ?", [saved.lastID]);
         res.json(rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Export backup (JSON)
+app.get('/api/export/json', async (req, res) => {
+    try {
+        const health = await all("SELECT * FROM health_data ORDER BY created_at DESC", []);
+        const notes = await all("SELECT * FROM daily_notes ORDER BY created_at DESC", []);
+        const timeline = await all("SELECT * FROM medical_timeline ORDER BY event_date DESC, created_at DESC", []);
+
+        const payload = {
+            exportedAt: new Date().toISOString(),
+            source: isPostgres() ? 'postgres' : 'sqlite',
+            sqlitePath: isPostgres() ? null : getSqlitePath(),
+            health_data: health,
+            daily_notes: notes,
+            medical_timeline: timeline
+        };
+
+        const fileName = `health-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        res.send(JSON.stringify(payload, null, 2));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Export backup (CSV)
+app.get('/api/export/csv', async (req, res) => {
+    const table = req.query.table || 'health_data';
+    if (!tableColumns[table]) return res.status(400).json({ error: 'Invalid table. Use health_data, daily_notes, or medical_timeline.' });
+
+    try {
+        const rows = table === 'medical_timeline'
+            ? await all(`SELECT * FROM ${table} ORDER BY event_date DESC, created_at DESC`, [])
+            : await all(`SELECT * FROM ${table} ORDER BY created_at DESC`, []);
+        const columns = tableColumns[table];
+        const header = columns.join(',');
+        const lines = rows.map(row => columns.map(col => escapeCsvValue(row[col])).join(','));
+        const csv = [header, ...lines].join('\n');
+        const fileName = `${table}-${new Date().toISOString().slice(0, 10)}.csv`;
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        res.send(csv);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

@@ -66,3 +66,7 @@ export const createTimelineEntry = async (payload) => {
     const response = await axios.post(`${API_BASE_URL}/timeline`, payload);
     return response.data;
 };
+
+export const exportJsonBackupUrl = () => `${API_BASE_URL}/export/json`;
+
+export const exportCsvBackupUrl = (table) => `${API_BASE_URL}/export/csv?table=${table}`;
